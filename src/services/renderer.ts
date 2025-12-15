@@ -1,6 +1,7 @@
-import { getPage, releasePage, waitForPuppeteerReady } from "./puppeteer.js";
+import { createIsolatedBrowser, closeIsolatedBrowser, waitForPuppeteerReady } from "./puppeteer.js";
 import { RenderOptions, VideoRenderOptions } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
+import { trackRenderStart, trackRenderComplete, trackRenderError } from "./metrics.js";
 
 declare global {
 	interface Window {
@@ -29,21 +30,23 @@ export async function renderSchematic(
 	schematicData: Buffer,
 	options: RenderOptions = {}
 ): Promise<Buffer> {
-	let page = null;
+	// Wait for Puppeteer to be ready
+	await waitForPuppeteerReady();
+
+	// Create a new isolated browser instance for this render
+	const { browser, page, id: browserId } = await createIsolatedBrowser();
+	const startTime = Date.now();
+	
+	trackRenderStart(browserId, 'image', schematicData.length);
 
 	try {
-		// Wait for Puppeteer to be ready
-		await waitForPuppeteerReady();
-
-		page = await getPage(); // Page is already ready!
-
-		logger.info(`Rendering schematic, size: ${schematicData.length} bytes`);
+		logger.info(`[${browserId}] Rendering schematic, size: ${schematicData.length} bytes`);
 
 		// Convert buffer to base64 for easier transmission
 		const base64Data = schematicData.toString("base64");
 
 		// Setup event listener BEFORE loading schematic and wait for completion
-		logger.info("Waiting for schematic render to complete...");
+		logger.info(`[${browserId}] Waiting for schematic render to complete...`);
 		const renderData: any = await page.evaluate(async (data) => {
 			// Setup event listener FIRST
 			const renderPromise = new Promise((resolve, reject) => {
@@ -76,7 +79,7 @@ export async function renderSchematic(
 		}, base64Data);
 
 		logger.info(
-			`Schematic rendered successfully: ${renderData.meshCount} meshes in ${renderData.buildTimeMs}ms`
+			`[${browserId}] Schematic rendered successfully: ${renderData.meshCount} meshes in ${renderData.buildTimeMs}ms`
 		);
 
 		// Take screenshot
@@ -96,12 +99,17 @@ export async function renderSchematic(
 			return Array.from(new Uint8Array(arrayBuffer));
 		}, options);
 
+		const duration = Date.now() - startTime;
+		trackRenderComplete(browserId, duration, renderData.meshCount);
+		
 		return Buffer.from(screenshotBlob);
 	} catch (error) {
-		logger.error("Error in renderSchematic:", error);
+		logger.error(`[${browserId}] Error in renderSchematic:`, error);
+		trackRenderError(browserId, error);
 		throw error;
 	} finally {
-		if (page) await releasePage(page);
+		// Always close the isolated browser instance
+		await closeIsolatedBrowser(browserId);
 	}
 }
 
@@ -110,18 +118,21 @@ export async function renderSchematicVideo(
 	schematicData: Buffer,
 	options: VideoRenderOptions = {}
 ): Promise<Buffer> {
-	let page = null;
+	await waitForPuppeteerReady();
+
+	// Create a new isolated browser instance for this render
+	const { browser, page, id: browserId } = await createIsolatedBrowser();
+	const startTime = Date.now();
+	
+	trackRenderStart(browserId, 'video', schematicData.length);
 
 	try {
-		await waitForPuppeteerReady();
-		page = await getPage();
-
-		logger.info(`Rendering schematic video, size: ${schematicData.length} bytes`);
+		logger.info(`[${browserId}] Rendering schematic video, size: ${schematicData.length} bytes`);
 
 		const base64Data = schematicData.toString("base64");
 
 		// Load schematic and wait for completion
-		logger.info("Loading schematic for video recording...");
+		logger.info(`[${browserId}] Loading schematic for video recording...`);
 		const renderData: any = await page.evaluate(async (data) => {
 			const renderPromise = new Promise((resolve, reject) => {
 				const timeout = setTimeout(() => {
@@ -148,7 +159,7 @@ export async function renderSchematicVideo(
 			return renderPromise;
 		}, base64Data);
 
-		logger.info(`Schematic loaded, starting video recording...`);
+		logger.info(`[${browserId}] Schematic loaded, starting video recording...`);
 
 		// Record video
 		const videoBlob = await page.evaluate(async (opts) => {
@@ -169,13 +180,18 @@ export async function renderSchematicVideo(
 			return Array.from(new Uint8Array(arrayBuffer));
 		}, options);
 
-		logger.info("Video recording completed successfully");
+		const duration = Date.now() - startTime;
+		trackRenderComplete(browserId, duration, renderData.meshCount);
+		
+		logger.info(`[${browserId}] Video recording completed successfully`);
 		return Buffer.from(videoBlob);
 
 	} catch (error) {
-		logger.error("Error in renderSchematicVideo:", error);
+		logger.error(`[${browserId}] Error in renderSchematicVideo:`, error);
+		trackRenderError(browserId, error);
 		throw error;
 	} finally {
-		if (page) await releasePage(page);
+		// Always close the isolated browser instance
+		await closeIsolatedBrowser(browserId);
 	}
 }

@@ -39,3 +39,4 @@ coverage/
 # Schematic renderer library (will be extracted)
 libs/package/
 .history
+data

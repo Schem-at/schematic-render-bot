@@ -1,0 +1,33 @@
+meta {
+  name: test synthase
+  type: http
+  seq: 1
+}
+
+post {
+  url: http://localhost:3000/api/synthase/basic-synth
+  body: text
+  auth: inherit
+}
+
+headers {
+  Content-Type: text/plain
+}
+
+body:json {
+  {
+    "code": ""
+  }
+}
+
+body:text {
+  const schem = new Schematic();
+  for(let z=0;z<100;z++){
+  for(let y=0;y<100;y++){
+  for(let x=0;x<5000;x++){
+  schem.set_block(x,y,z,`minecraft:stone`);
+  }
+  }
+  }
+  return {schematic:schem}
+}

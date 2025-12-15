@@ -26,12 +26,13 @@ app.use(
 app.use(cors());
 app.use(morgan("combined"));
 app.use(express.json({ limit: "50mb" }));
+app.use(express.text());
 
-// Serve React frontend
-app.use(express.static(path.join(__dirname, "../dist-frontend")));
-
-// API routes
+// API routes FIRST (before static files)
 setupRoutes(app);
+
+// Serve React frontend (after API routes)
+app.use(express.static(path.join(__dirname, "../dist-frontend")));
 
 // Catch-all handler for React Router
 app.get("*", (req, res) => {
@@ -61,11 +62,15 @@ async function startServer() {
 		await initPuppeteerService();
 		logger.info("✅ Puppeteer service initialized");
 
-		if (process.env.DISCORD_TOKEN) {
-			await initDiscordBot();
-			logger.info("✅ Discord bot initialized");
-		} else {
-			logger.warn("⚠️  Discord token not provided, bot disabled");
+		try {
+			if (process.env.DISCORD_TOKEN) {
+				await initDiscordBot();
+				logger.info("✅ Discord bot initialized");
+			} else {
+				logger.warn("⚠️  Discord token not provided, bot disabled");
+			}
+		} catch (error) {
+			logger.warn("⚠️  Failed to start discord bot");
 		}
 
 		logger.info("🚀 All services ready!");

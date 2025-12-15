@@ -1,0 +1,23 @@
+meta {
+  name: basic-synth
+  type: http
+  seq: 6
+}
+
+post {
+  url: http://localhost:3000/api/synthase/basic-synth
+  body: text
+  auth: inherit
+}
+
+headers {
+  Content-Type: text/plain
+}
+
+body:json {
+  await new Promise(resolve => setTimeout(resolve, 200)); return { message: 'this should timeout' };
+}
+
+body:text {
+  await new Promise(resolve => setTimeout(resolve, 200)); return { message: 'this should timeout' };
+}

@@ -1,12 +1,12 @@
 import puppeteer, { Browser, Page } from "puppeteer";
 import { logger } from "../shared/logger.js";
 
-let browser: Browser | null = null;
-let pagePool: Page[] = [];
 let isInitialized = false;
 let initializationPromise: Promise<void> | null = null;
-const MAX_PAGES = parseInt(process.env.MAX_CONCURRENT_RENDERS || "3");
 const FRONTEND_URL = "http://localhost:3000";
+
+// Track active browser instances for monitoring
+const activeBrowsers = new Map<string, { browser: Browser; page: Page; startTime: number }>();
 
 // tell TypeScript that window.schematicRendererInitialized, THREE, and window.schematicHelpers are defined
 
@@ -18,11 +18,12 @@ export async function initPuppeteerService(): Promise<void> {
 
 	initializationPromise = (async () => {
 		try {
-			logger.info("🚀 Launching Puppeteer browser...");
+			logger.info("🚀 Initializing Puppeteer service (isolated browser mode)...");
 
-			browser = await puppeteer.launch({
+			// Test if React app is accessible
+			const testBrowser = await puppeteer.launch({
 				// @ts-ignore
-				headless: "new", // Use the new headless mode for better performance
+				headless: "new",
 				timeout: 60_000,
 				args: [
 					"--no-sandbox",
@@ -37,147 +38,103 @@ export async function initPuppeteerService(): Promise<void> {
 				],
 			});
 
-			logger.info("✅ Browser launched successfully");
+			const testPage = await testBrowser.newPage();
+			await testPage.goto(FRONTEND_URL, {
+				waitUntil: "domcontentloaded",
+				timeout: 30000,
+			});
 
-			// Initialize the page pool
-			await initializePagePool();
+			const title = await testPage.title();
+			logger.info(`✅ React app accessible, title: ${title}`);
+
+			await testPage.close();
+			await testBrowser.close();
 
 			isInitialized = true;
-			logger.info("✅ Puppeteer service fully initialized");
+			logger.info("✅ Puppeteer service fully initialized (isolated browser mode)");
 		} catch (error: any) {
-    console.error("Failed to initialize Puppeteer:");
-    console.error("Error message:", error.message);
-    console.error("Error stack:", error.stack);
-    console.error("Full error:", error);
-    
-    logger.error("Failed to initialize Puppeteer:", error.message || error);
-    isInitialized = false;
-    throw error;
-}
+			console.error("Failed to initialize Puppeteer:");
+			console.error("Error message:", error.message);
+			console.error("Error stack:", error.stack);
+			console.error("Full error:", error);
+			
+			logger.error("Failed to initialize Puppeteer:", error.message || error);
+			isInitialized = false;
+			throw error;
+		}
 	})();
 
 	return initializationPromise;
 }
 
 /**
- * Initialize schematic rendering page pool
+ * Create a new isolated browser instance with initialized page
  */
-async function initializePagePool(): Promise<void> {
-	try {
-		logger.info("Initializing page pool...");
+export async function createIsolatedBrowser(): Promise<{ browser: Browser; page: Page; id: string }> {
+	const browserId = `browser-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+	
+	logger.info(`[${browserId}] Creating new isolated browser instance...`);
+	
+	const browser = await puppeteer.launch({
+		// @ts-ignore
+		headless: "new",
+		timeout: 60_000,
+		args: [
+			"--no-sandbox",
+			"--disable-setuid-sandbox",
+			"--disable-dev-shm-usage",
+			"--disable-accelerated-2d-canvas",
+			"--no-first-run",
+			"--disable-audio-output",
+			"--disable-background-timer-throttling",
+			"--disable-backgrounding-occluded-windows",
+			"--disable-renderer-backgrounding",
+		],
+	});
 
-		// Test if React app is accessible first
-		try {
-			const testPage = await browser!.newPage();
-			await testPage.goto(FRONTEND_URL, {
-				waitUntil: "domcontentloaded",
-				timeout: 30000,
-			});
-
-			// Check if the basic page loads
-			const title = await testPage.title();
-			logger.info(`✅ React app accessible, title: ${title}`);
-
-			await testPage.close();
-		} catch (error: any) {
-			logger.error(
-				`❌ React app not accessible at ${FRONTEND_URL}:`,
-				error.message
-			);
-			throw new Error(
-				`React app unavailable at ${FRONTEND_URL}. Make sure frontend is built and served.`
-			);
-		}
-
-		// Create page pool with individual error handling
-		let successCount = 0;
-		for (let i = 0; i < MAX_PAGES; i++) {
-			try {
-				logger.info(`Creating page ${i + 1}/${MAX_PAGES}...`);
-				const page = await createSchematicPage();
-				pagePool.push(page);
-				successCount++;
-				logger.info(`✅ Created page ${i + 1}/${MAX_PAGES}`);
-			} catch (error: any) {
-				logger.error(`❌ Failed to create page ${i + 1}:`, error.message);
-				// Continue trying to create more pages
-			}
-		}
-
-		logger.info(
-			`✅ Initialized page pool with ${successCount}/${MAX_PAGES} pages`
-		);
-
-		// Allow service to start even with partial success
-		if (successCount === 0) {
-			logger.warn(
-				"⚠️ No pages initialized successfully - service will have degraded functionality"
-			);
-		}
-	} catch (error: any) {
-		logger.error("❌ Failed to initialize page pool:", error.message);
-		throw error;
-	}
-}
-
-/**
- * Create a new schematic rendering page (pre-initialized and ready)
- */
-async function createSchematicPage(): Promise<Page> {
-	const page = await browser!.newPage();
+	const page = await browser.newPage();
 
 	// Enable logging for debugging
 	page.on("console", (msg) => {
 		const type = msg.type();
 		const text = msg.text();
-		logger.info(`BROWSER [${type.toUpperCase()}]: ${text}`);
+		logger.info(`[${browserId}] BROWSER [${type.toUpperCase()}]: ${text}`);
 	});
 
-	page.on("error", (err) => logger.error("PAGE ERROR:", err));
-	page.on("pageerror", (err) => logger.error("PAGE SCRIPT ERROR:", err));
+	page.on("error", (err) => logger.error(`[${browserId}] PAGE ERROR:`, err));
+	page.on("pageerror", (err) => logger.error(`[${browserId}] PAGE SCRIPT ERROR:`, err));
 
 	// Set viewport for rendering
 	await page.setViewport({ width: 1920, height: 1080 });
 
 	try {
-		logger.info(`Loading React app: ${FRONTEND_URL}`);
+		logger.info(`[${browserId}] Loading React app: ${FRONTEND_URL}`);
 
 		await page.goto(FRONTEND_URL, {
 			waitUntil: "domcontentloaded",
 			timeout: 30000,
 		});
 
-		logger.info("✅ React app loaded successfully");
-
-		// Check if THREE is available
-		const threeStatus = await page.evaluate(() => {
-			return {
-				hasThree: !!window.THREE,
-				threeVersion: window.THREE?.REVISION || "not found",
-			};
-		});
-		logger.info("THREE.js status:", threeStatus);
-
-		logger.info("Waiting for schematic helpers to be available...");
+		logger.info(`[${browserId}] ✅ React app loaded successfully`);
 
 		// Wait for the React app's global helpers to be ready
 		await page.waitForFunction(
-	() => {
-		return (
-			window.schematicHelpers &&
-			typeof window.schematicHelpers.waitForReady === "function" &&
-			typeof window.schematicHelpers.startVideoRecording === "function" && 
-			typeof window.schematicHelpers.takeScreenshot === "function" &&
-			typeof window.schematicHelpers.loadSchematic === "function"
+			() => {
+				return (
+					window.schematicHelpers &&
+					typeof window.schematicHelpers.waitForReady === "function" &&
+					typeof window.schematicHelpers.startVideoRecording === "function" && 
+					typeof window.schematicHelpers.takeScreenshot === "function" &&
+					typeof window.schematicHelpers.loadSchematic === "function"
+				);
+			},
+			{
+				timeout: 15000,
+				polling: 500,
+			}
 		);
-	},
-	{
-		timeout: 15000,
-		polling: 500,
-	}
-);
 
-		logger.info("✅ Schematic helpers found!");
+		logger.info(`[${browserId}] ✅ Schematic helpers found!`);
 
 		// Check current status before waiting
 		const preWaitStatus = await page.evaluate(() => {
@@ -187,21 +144,20 @@ async function createSchematicPage(): Promise<Page> {
 				rendererInitialized: window.schematicRendererInitialized,
 			};
 		});
-		logger.info("Pre-wait status:", preWaitStatus);
 
 		if (preWaitStatus.isReady) {
-			logger.info("✅ Renderer already ready, skipping wait");
+			logger.info(`[${browserId}] ✅ Renderer already ready, skipping wait`);
 		} else {
-			logger.info("Waiting for renderer initialization...");
+			logger.info(`[${browserId}] Waiting for renderer initialization...`);
 
-			// Wait for the renderer to be fully initialized with shorter timeout
+			// Wait for the renderer to be fully initialized
 			await page.evaluate(() => {
 				return new Promise((resolve, reject) => {
 					const timeout = setTimeout(() => {
 						reject(
 							new Error("Renderer initialization timeout after 10 seconds")
 						);
-					}, 10000); // Reduced timeout
+					}, 10000);
 
 					window.schematicHelpers
 						.waitForReady()
@@ -214,64 +170,55 @@ async function createSchematicPage(): Promise<Page> {
 			});
 		}
 
-		logger.info("✅ Schematic page ready and initialized");
-		return page;
-	} catch (error) {
-		logger.error("❌ Schematic page initialization failed:", error);
+		// Track active browser
+		activeBrowsers.set(browserId, { browser, page, startTime: Date.now() });
 
-		// Get detailed debug info
+		logger.info(`[${browserId}] ✅ Isolated browser ready and initialized`);
+		return { browser, page, id: browserId };
+	} catch (error) {
+		logger.error(`[${browserId}] ❌ Browser initialization failed:`, error);
+
+		// Cleanup on error
 		try {
-			const debugInfo = await page.evaluate(() => {
-				return {
-					url: window.location.href,
-					hasThree: !!window.THREE,
-					hasHelpers: !!window.schematicHelpers,
-					rendererInitialized: window.schematicRendererInitialized,
-					helpersKeys: window.schematicHelpers
-						? Object.keys(window.schematicHelpers)
-						: [],
-					consoleErrors: window.console ? "Console available" : "No console",
-				};
-			});
-			logger.info("Debug info:", debugInfo);
-		} catch (debugError: any) {
-			logger.info("Could not get debug info:", debugError.message);
+			await page.close();
+			await browser.close();
+		} catch (cleanupError) {
+			logger.error(`[${browserId}] Cleanup error:`, cleanupError);
 		}
 
-		await page.close();
 		throw error;
 	}
 }
 
-export function getBrowser(): Browser | null {
-	return browser;
-}
-
 /**
- * Get a page from the pool (with readiness check)
+ * Close and cleanup isolated browser instance
  */
-export async function getPage(): Promise<Page> {
-	// Ensure Puppeteer is initialized
-	if (!isInitialized || !browser) {
-		throw new Error(
-			"Puppeteer service not initialized. Please wait and try again."
-		);
+export async function closeIsolatedBrowser(browserId: string): Promise<void> {
+	const browserInstance = activeBrowsers.get(browserId);
+	if (!browserInstance) {
+		logger.warn(`[${browserId}] Browser instance not found for cleanup`);
+		return;
 	}
 
-	if (pagePool.length > 0) {
-		return pagePool.pop()!;
-	}
+	const duration = Date.now() - browserInstance.startTime;
+	logger.info(`[${browserId}] Closing isolated browser (lived ${duration}ms)`);
 
-	// Create on-demand if pool is empty
-	logger.info("Creating page on-demand...");
-	return await createSchematicPage();
+	try {
+		await browserInstance.page.close();
+		await browserInstance.browser.close();
+		activeBrowsers.delete(browserId);
+		logger.info(`[${browserId}] ✅ Browser closed successfully`);
+	} catch (error) {
+		logger.error(`[${browserId}] Error closing browser:`, error);
+		activeBrowsers.delete(browserId);
+	}
 }
 
 /**
  * Check if Puppeteer is ready
  */
 export function isPuppeteerReady(): boolean {
-	return isInitialized && browser !== null;
+	return isInitialized;
 }
 
 /**
@@ -291,23 +238,15 @@ export async function waitForPuppeteerReady(
 }
 
 /**
- * Return page to pool
+ * Get browser pool status (for monitoring)
  */
-export async function releasePage(page: Page): Promise<void> {
-	if (pagePool.length < MAX_PAGES) {
-		pagePool.push(page);
-	} else {
-		await page.close();
-	}
-}
-
-/**
- * Get page pool status
- */
-export function getPagePoolStatus() {
+export function getBrowserStatus() {
 	return {
-		available: pagePool.length,
-		total: MAX_PAGES,
-		status: pagePool.length > 0 ? "ready" : "unavailable",
+		initialized: isInitialized,
+		activeBrowsers: activeBrowsers.size,
+		browsers: Array.from(activeBrowsers.entries()).map(([id, instance]) => ({
+			id,
+			uptime: Date.now() - instance.startTime,
+		})),
 	};
 }

@@ -1,0 +1,19 @@
+meta {
+  name: est-timeout-with-context
+  type: http
+  seq: 3
+}
+
+post {
+  url: http://localhost:3000/api/synthase/test-timeout-with-context
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {}
+}

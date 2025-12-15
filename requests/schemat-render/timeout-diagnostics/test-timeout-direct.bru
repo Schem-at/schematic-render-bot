@@ -1,0 +1,19 @@
+meta {
+  name: test-timeout-direct
+  type: http
+  seq: 1
+}
+
+post {
+  url: http://localhost:3000/api/synthase/test-timeout-direct
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {}
+}

@@ -1,0 +1,19 @@
+meta {
+  name: test-timeout-synthase
+  type: http
+  seq: 2
+}
+
+post {
+  url: http://localhost:3000/api/synthase/test-timeout-synthase
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {}
+}

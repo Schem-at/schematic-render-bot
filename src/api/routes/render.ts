@@ -1,6 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
-import { renderSchematic } from "../../services/renderer.js";
+import { processRender, getCachedRender } from "../../services/render-service.js";
+import { calculateHash, getFile } from "../../services/storage.js";
 import { logger } from "../../shared/logger.js";
 
 const router = Router();
@@ -32,12 +33,44 @@ router.post(
 				...JSON.parse(req.body.options || "{}"),
 			};
 
-			const pngBuffer = await renderSchematic(req.file.buffer, options);
+			// Check cache first
+			const fileHash = calculateHash(req.file.buffer);
+			const cached = getCachedRender(fileHash, options);
+			
+			if (cached && req.query.cache !== 'false') {
+				logger.info(`Using cached render: ${cached.id}`);
+				// Get the cached artifact
+				const artifactPath = cached.file_path;
+				if (artifactPath) {
+					const cachedBuffer = await getFile(fileHash);
+					if (cachedBuffer) {
+						const filename = `${req.file.originalname.replace(/\.[^/.]+$/, "")}.png`;
+						res.set("Content-Type", "image/png");
+						res.set("Content-Disposition", `attachment; filename="${filename}"`);
+						res.set("X-Cache", "HIT");
+						res.set("X-Render-Id", cached.id);
+						return res.send(cachedBuffer);
+					}
+				}
+			}
+
+			// Process new render with full tracking
+			const result = await processRender({
+				schematicData: req.file.buffer,
+				options,
+				type: 'image',
+				source: 'api',
+				originalFilename: req.file.originalname,
+				userId: req.ip || 'unknown',
+			});
 
 			const filename = `${req.file.originalname.replace(/\.[^/.]+$/, "")}.png`;
 			res.set("Content-Type", "image/png");
 			res.set("Content-Disposition", `attachment; filename="${filename}"`);
-			res.send(pngBuffer);
+			res.set("X-Cache", "MISS");
+			res.set("X-Render-Id", result.renderId);
+			res.set("X-File-Hash", result.fileHash);
+			res.send(result.outputBuffer);
 		} catch (error: any) {
 			logger.error("Schematic render error:", error);
 			res
