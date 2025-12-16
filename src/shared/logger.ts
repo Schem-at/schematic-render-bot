@@ -15,12 +15,16 @@ function shouldLog(level: LogLevel): boolean {
 
 function serializeError(error: any): any {
   if (error instanceof Error) {
-    return {
+    const serialized: any = {
       name: error.name,
       message: error.message,
       stack: error.stack,
-      ...(error.cause && { cause: serializeError(error.cause) }),
     };
+    // Check for cause property (ES2022+)
+    if ('cause' in error && error.cause) {
+      serialized.cause = serializeError(error.cause);
+    }
+    return serialized;
   }
   return error;
 }
