@@ -22,26 +22,42 @@ export function registerCommands() {
 	commands.splice(0, commands.length);
 	menus.splice(0, menus.length);
 
-	// Find all the commands
+	// Find all the commands (support both .ts in dev and .js in production)
 	const commandsDirPath = path.join(__dirname, 'commands');
 	const commandFiles = fs.readdirSync(commandsDirPath)
-		.filter(file => file.endsWith('.ts'));
+		.filter(file => file.endsWith('.ts') || file.endsWith('.js'));
 
 	// Register all the commands
 	commandFiles.forEach(file => {
-		const command = require("./" + path.join('commands', file)).default;
-		commands.push(new command());
+		try {
+			const command = require("./" + path.join('commands', file)).default;
+			if (command) {
+				commands.push(new command());
+			} else {
+				logger.warn(`Command file ${file} did not export a default class`);
+			}
+		} catch (error) {
+			logger.error(`Failed to load command ${file}:`, error);
+		}
 	});
-	
-	// Find all the context menus
+
+	// Find all the context menus (support both .ts in dev and .js in production)
 	const menuDirPath = path.join(__dirname, 'menus');
 	const menuFiles = fs.readdirSync(menuDirPath)
-		.filter(file => file.endsWith('.ts'));
-	
+		.filter(file => file.endsWith('.ts') || file.endsWith('.js'));
+
 	// Register all the menus
 	menuFiles.forEach(file => {
-		const menu = require("./" + path.join('menus', file)).default;
-		menus.push(new menu());
+		try {
+			const menu = require("./" + path.join('menus', file)).default;
+			if (menu) {
+				menus.push(new menu());
+			} else {
+				logger.warn(`Menu file ${file} did not export a default class`);
+			}
+		} catch (error) {
+			logger.error(`Failed to load menu ${file}:`, error);
+		}
 	});
 
 	return [...commands, ...menus];
@@ -60,8 +76,18 @@ export async function syncCommands() {
 	if (!commands.some(cmd => cmd instanceof Reload))
 		commands.push(new Reload());
 
-	const applications = [...commands, ...menus];
-	
+	// Filter out any undefined commands/menus and validate
+	const validCommands = commands.filter(cmd => cmd && cmd.info);
+	const validMenus = menus.filter(menu => menu && menu.info);
+	const applications = [...validCommands, ...validMenus];
+
+	if (applications.length === 0) {
+		logger.warn("No commands or menus to synchronize");
+		return;
+	}
+
+	logger.info(`Preparing to sync ${validCommands.length} commands and ${validMenus.length} menus`);
+
 	try {
 		const rest = new REST().setToken(token);
 		const route = Routes.applicationCommands(clientId);
@@ -72,8 +98,9 @@ export async function syncCommands() {
 		const response = await rest.put(route, { body: data }) as RESTGetAPIApplicationCommandsResult;
 
 		const names = response.map(app => app.name).join(", ");
-		logger.info(`Successfully synchronized ${response.length} commands & menus: ${names}`);
+		logger.info(`✅ Successfully synchronized ${response.length} commands & menus: ${names}`);
 	} catch (error) {
+		logger.error("Failed to synchronize commands:", error);
 		console.error(error);
 	}
 }
