@@ -138,6 +138,60 @@ const commands = [
   new SlashCommandBuilder()
     .setName('ping')
     .setDescription('Check if the bot is online'),
+
+  new SlashCommandBuilder()
+    .setName('batch')
+    .setDescription('Batch render multiple schematics from a zip file')
+    .addAttachmentOption(option =>
+      option
+        .setName('zip')
+        .setDescription('A zip file containing .schem or .litematic files')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('view')
+        .setDescription('View type for all renders (default: isometric)')
+        .addChoices(
+          { name: 'Isometric', value: 'isometric' },
+          { name: 'Perspective', value: 'perspective' }
+        )
+    )
+    .addStringOption(option =>
+      option
+        .setName('background')
+        .setDescription('Background color (default: transparent)')
+        .addChoices(
+          { name: 'Transparent', value: 'transparent' },
+          { name: 'Dark (#1a1a1a)', value: '#1a1a1a' },
+          { name: 'Light (#f0f0f0)', value: '#f0f0f0' },
+          { name: 'Blue (#2c3e50)', value: '#2c3e50' }
+        )
+    )
+    .addStringOption(option =>
+      option
+        .setName('framing')
+        .setDescription('Camera framing (default: medium)')
+        .addChoices(
+          { name: 'Tight', value: 'tight' },
+          { name: 'Medium', value: 'medium' },
+          { name: 'Wide', value: 'wide' }
+        )
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('width')
+        .setDescription('Image width in pixels (default: 1920)')
+        .setMinValue(256)
+        .setMaxValue(4096)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('height')
+        .setDescription('Image height in pixels (default: 1080)')
+        .setMinValue(256)
+        .setMaxValue(4096)
+    ),
 ];
 
 /**

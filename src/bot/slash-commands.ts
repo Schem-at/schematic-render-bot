@@ -376,6 +376,11 @@ async function handleHelpCommand(interaction: ChatInputCommandInteraction) {
         inline: false,
       },
       {
+        name: '📦 /batch',
+        value: 'Batch render multiple schematics from a zip file. Great for processing many schematics at once!',
+        inline: false,
+      },
+      {
         name: '⚙️ /options',
         value: 'View or modify your default render settings',
         inline: false,
@@ -386,8 +391,13 @@ async function handleHelpCommand(interaction: ChatInputCommandInteraction) {
         inline: false,
       },
       {
+        name: '📦 Batch Mode',
+        value: '• Upload a zip file with `.schem` or `.litematic` files\n• Configure view, background, and resolution for all renders\n• Get a zip file back with all rendered images',
+        inline: false,
+      },
+      {
         name: '💡 Quick Start',
-        value: 'Use `/render` with your schematic file, or just drag & drop a file to auto-render!',
+        value: 'Use `/render` with your schematic file, or `/batch` with a zip file for multiple schematics!',
         inline: false,
       }
     )
