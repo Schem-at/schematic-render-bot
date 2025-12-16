@@ -20,6 +20,12 @@ import {
 const MAX_ZIP_SIZE = 50 * 1024 * 1024; // 50MB max zip size
 const DISCORD_FILE_LIMIT = 25 * 1024 * 1024; // Discord's 25MB file limit (can be 100MB for boosted servers)
 
+// Batch processing settings to prevent crashes
+const DELAY_BETWEEN_RENDERS_MS = 2000; // 2 second delay between renders to let browser cleanup
+const BATCH_SIZE = 5; // Process this many before a longer pause
+const BATCH_PAUSE_MS = 5000; // 5 second pause between batches
+const MAX_RETRIES = 2; // Retry failed renders once
+
 export default class Batch implements ICommand {
 	info = new SlashCommandBuilder()
 		.setName('batch')
@@ -148,6 +154,7 @@ export default class Batch implements ICommand {
 
 			// Create initial progress embed
 			const totalCount = extraction.schematics.length;
+			this.batchStartTime = Date.now();
 			const progressEmbed = this.createProgressEmbed(
 				0,
 				totalCount,
@@ -167,41 +174,66 @@ export default class Batch implements ICommand {
 				framing,
 			};
 
-			// Process each schematic
+			// Process each schematic with delays and batching to prevent crashes
 			const results: BatchRenderResult[] = [];
 			let completed = 0;
 			let succeeded = 0;
 			let failed = 0;
 
-			for (const schematic of extraction.schematics) {
-				try {
-					// Read schematic file
-					const schematicBuffer = await readFile(schematic.path);
+			for (let i = 0; i < extraction.schematics.length; i++) {
+				const schematic = extraction.schematics[i];
+				let lastError: Error | null = null;
+				let renderSucceeded = false;
 
-					// Render the schematic
-					const result = await processRender({
-						schematicData: schematicBuffer,
-						options: renderOptions,
-						type: 'image',
-						source: 'discord',
-						originalFilename: schematic.name,
-						userId: interaction.user.id,
-						channelId: interaction.channelId,
-						messageId: interaction.id,
-					});
+				// Retry loop for failed renders
+				for (let attempt = 0; attempt <= MAX_RETRIES && !renderSucceeded; attempt++) {
+					try {
+						if (attempt > 0) {
+							logger.info(`Retrying ${schematic.name} (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+							// Wait longer before retry
+							await this.delay(DELAY_BETWEEN_RENDERS_MS * 2);
+						}
 
-					results.push({
-						name: schematic.name,
-						success: true,
-						buffer: result.outputBuffer,
-					});
-					succeeded++;
-				} catch (err: any) {
-					logger.error(`Failed to render ${schematic.name}:`, err);
+						// Read schematic file
+						const schematicBuffer = await readFile(schematic.path);
+
+						// Render the schematic
+						const result = await processRender({
+							schematicData: schematicBuffer,
+							options: renderOptions,
+							type: 'image',
+							source: 'discord',
+							originalFilename: schematic.name,
+							userId: interaction.user.id,
+							channelId: interaction.channelId,
+							messageId: interaction.id,
+						});
+
+						results.push({
+							name: schematic.name,
+							success: true,
+							buffer: result.outputBuffer,
+						});
+						succeeded++;
+						renderSucceeded = true;
+					} catch (err: any) {
+						lastError = err;
+						logger.error(`Failed to render ${schematic.name} (attempt ${attempt + 1}):`, err.message || err);
+
+						// If it's a page crash, wait longer before retry
+						if (err.message?.includes('Page crashed') || err.message?.includes('Target closed')) {
+							logger.warn(`Browser crash detected, waiting before retry...`);
+							await this.delay(BATCH_PAUSE_MS);
+						}
+					}
+				}
+
+				// If all retries failed, record the error
+				if (!renderSucceeded) {
 					results.push({
 						name: schematic.name,
 						success: false,
-						error: err.message || 'Unknown error',
+						error: lastError?.message || 'Unknown error (after retries)',
 					});
 					failed++;
 				}
@@ -216,7 +248,28 @@ export default class Batch implements ICommand {
 						results,
 						{ view, background, framing, width, height }
 					);
-					await interaction.editReply({ embeds: [updatedEmbed] });
+					try {
+						await interaction.editReply({ embeds: [updatedEmbed] });
+					} catch (editErr) {
+						logger.warn('Failed to update progress embed:', editErr);
+					}
+				}
+
+				// Add delay between renders to let the browser cleanup
+				if (i < extraction.schematics.length - 1) {
+					await this.delay(DELAY_BETWEEN_RENDERS_MS);
+
+					// Every BATCH_SIZE renders, take a longer pause
+					if ((i + 1) % BATCH_SIZE === 0) {
+						logger.info(`Batch pause after ${i + 1} renders...`);
+						await this.delay(BATCH_PAUSE_MS);
+
+						// Force garbage collection if available (Node.js with --expose-gc flag)
+						if (global.gc) {
+							logger.info('Running garbage collection...');
+							global.gc();
+						}
+					}
 				}
 			}
 
@@ -288,6 +341,8 @@ export default class Batch implements ICommand {
 		}
 	}
 
+	private batchStartTime: number = 0;
+
 	private createProgressEmbed(
 		completed: number,
 		total: number,
@@ -299,10 +354,25 @@ export default class Batch implements ICommand {
 		const succeeded = results.filter((r) => r.success).length;
 		const failed = results.filter((r) => !r.success).length;
 
+		// Calculate ETA
+		let etaString = 'Calculating...';
+		if (completed > 0 && this.batchStartTime > 0) {
+			const elapsedMs = Date.now() - this.batchStartTime;
+			const avgTimePerFile = elapsedMs / completed;
+			const remainingFiles = total - completed;
+			const etaMs = avgTimePerFile * remainingFiles;
+
+			if (etaMs < 60000) {
+				etaString = `~${Math.ceil(etaMs / 1000)}s`;
+			} else {
+				etaString = `~${Math.ceil(etaMs / 60000)}m`;
+			}
+		}
+
 		return new EmbedBuilder()
 			.setColor(0x5865f2)
 			.setTitle('📦 Batch Rendering in Progress...')
-			.setDescription(`Processing **${total}** schematics`)
+			.setDescription(`Processing **${total}** schematics\n⏱️ Estimated time remaining: ${etaString}`)
 			.addFields(
 				{
 					name: 'Progress',
@@ -330,6 +400,7 @@ export default class Batch implements ICommand {
 					inline: false,
 				}
 			)
+			.setFooter({ text: 'Processing with delays to ensure stability' })
 			.setTimestamp();
 	}
 
@@ -412,5 +483,9 @@ export default class Batch implements ICommand {
 		const filled = Math.round(percentage / 10);
 		const empty = 10 - filled;
 		return '█'.repeat(filled) + '░'.repeat(empty);
+	}
+
+	private delay(ms: number): Promise<void> {
+		return new Promise(resolve => setTimeout(resolve, ms));
 	}
 }

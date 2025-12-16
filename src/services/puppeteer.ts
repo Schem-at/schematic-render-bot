@@ -73,13 +73,25 @@ export interface BrowserRenderOptions {
 	background?: string;
 }
 
+// Maximum concurrent browsers allowed
+const MAX_CONCURRENT_BROWSERS = 3;
+
 /**
  * Create a new isolated browser instance with initialized page
  */
 export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions): Promise<{ browser: Browser; page: Page; id: string }> {
 	const browserId = `browser-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-	logger.info(`[${browserId}] Creating new isolated browser instance...`);
+	// Check if we have too many browsers active - wait if so
+	while (activeBrowsers.size >= MAX_CONCURRENT_BROWSERS) {
+		logger.warn(`[${browserId}] Too many active browsers (${activeBrowsers.size}), waiting...`);
+		await new Promise(resolve => setTimeout(resolve, 1000));
+
+		// Clean up any stale browsers (older than 5 minutes)
+		await cleanupStaleBrowsers();
+	}
+
+	logger.info(`[${browserId}] Creating new isolated browser instance (active: ${activeBrowsers.size})...`);
 
 	const browser = await puppeteer.launch({
 		// @ts-ignore
@@ -95,6 +107,10 @@ export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions
 			"--disable-background-timer-throttling",
 			"--disable-backgrounding-occluded-windows",
 			"--disable-renderer-backgrounding",
+			// Memory limits to prevent crashes
+			"--js-flags=--max-old-space-size=512",
+			"--disable-gpu",
+			"--single-process",
 		],
 	});
 
@@ -220,14 +236,75 @@ export async function closeIsolatedBrowser(browserId: string): Promise<void> {
 	logger.info(`[${browserId}] Closing isolated browser (lived ${duration}ms)`);
 
 	try {
-		await browserInstance.page.close();
-		await browserInstance.browser.close();
+		// First close the page
+		try {
+			await browserInstance.page.close();
+		} catch (pageErr) {
+			logger.warn(`[${browserId}] Page close error (may already be closed):`, pageErr);
+		}
+
+		// Then close the browser
+		try {
+			await browserInstance.browser.close();
+		} catch (browserErr) {
+			logger.warn(`[${browserId}] Browser close error:`, browserErr);
+			// Force kill the browser process if close fails
+			try {
+				const browserProcess = browserInstance.browser.process();
+				if (browserProcess) {
+					browserProcess.kill('SIGKILL');
+					logger.info(`[${browserId}] Force killed browser process`);
+				}
+			} catch (killErr) {
+				logger.error(`[${browserId}] Failed to force kill browser:`, killErr);
+			}
+		}
+
 		activeBrowsers.delete(browserId);
 		logger.info(`[${browserId}] ✅ Browser closed successfully`);
 	} catch (error) {
 		logger.error(`[${browserId}] Error closing browser:`, error);
 		activeBrowsers.delete(browserId);
 	}
+}
+
+/**
+ * Cleanup stale browsers that have been running too long
+ */
+async function cleanupStaleBrowsers(maxAgeMs: number = 5 * 60 * 1000): Promise<void> {
+	const now = Date.now();
+	const staleBrowserIds: string[] = [];
+
+	for (const [browserId, instance] of activeBrowsers.entries()) {
+		const age = now - instance.startTime;
+		if (age > maxAgeMs) {
+			logger.warn(`[${browserId}] Browser is stale (${Math.round(age / 1000)}s old), marking for cleanup`);
+			staleBrowserIds.push(browserId);
+		}
+	}
+
+	// Clean up stale browsers
+	for (const browserId of staleBrowserIds) {
+		await closeIsolatedBrowser(browserId);
+	}
+
+	if (staleBrowserIds.length > 0) {
+		logger.info(`Cleaned up ${staleBrowserIds.length} stale browser(s)`);
+	}
+}
+
+/**
+ * Force cleanup all active browsers (for emergency cleanup)
+ */
+export async function forceCleanupAllBrowsers(): Promise<void> {
+	logger.warn(`Force cleaning up all ${activeBrowsers.size} active browsers...`);
+
+	const browserIds = Array.from(activeBrowsers.keys());
+	for (const browserId of browserIds) {
+		await closeIsolatedBrowser(browserId);
+	}
+
+	logger.info('Force cleanup complete');
 }
 
 /**
