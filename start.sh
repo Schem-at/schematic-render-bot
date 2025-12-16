@@ -8,7 +8,7 @@ echo "🚀 Starting Schemat Render Service on port ${PORT}..."
 
 # Start the backend and wait for it to be fully ready
 echo "📱 Starting backend server..."
-node dist/app.js &
+bun run dist/app.js &
 BACKEND_PID=$!
 
 # Wait for backend to be ready

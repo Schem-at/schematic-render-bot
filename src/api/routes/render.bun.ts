@@ -48,7 +48,7 @@ export function setupRenderRoutes(router: Router): void {
 					const cachedBuffer = await getFile(fileHash);
 					if (cachedBuffer) {
 						const filename = `${schematicFile.name.replace(/\.[^/.]+$/, "")}.png`;
-						return new Response(cachedBuffer, {
+						return new Response(cachedBuffer as BodyInit, {
 							headers: {
 								"Content-Type": "image/png",
 								"Content-Disposition": `attachment; filename="${filename}"`,
@@ -72,7 +72,7 @@ export function setupRenderRoutes(router: Router): void {
 			});
 
 			const filename = `${schematicFile.name.replace(/\.[^/.]+$/, "")}.png`;
-			return new Response(result.outputBuffer, {
+			return new Response(result.outputBuffer as BodyInit, {
 				headers: {
 					"Content-Type": "image/png",
 					"Content-Disposition": `attachment; filename="${filename}"`,

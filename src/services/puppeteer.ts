@@ -3,7 +3,8 @@ import { logger } from "../shared/logger.js";
 
 let isInitialized = false;
 let initializationPromise: Promise<void> | null = null;
-const FRONTEND_URL = "http://localhost:3000";
+const PORT = parseInt(process.env.PORT || "3000");
+const FRONTEND_URL = `http://localhost:${PORT}`;
 
 // Track active browser instances for monitoring
 const activeBrowsers = new Map<string, { browser: Browser; page: Page; startTime: number }>();

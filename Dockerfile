@@ -44,14 +44,12 @@ COPY . .
 COPY --from=frontend-builder /app/frontend/dist ./dist-frontend
 RUN bunx tsc
 
-FROM node:18-slim AS runtime
+FROM oven/bun:1 AS runtime
 
 RUN apt-get update && apt-get install -y \
     chromium fonts-liberation libasound2 libatk-bridge2.0-0 \
     libdrm2 libgtk-3-0 libgtk-4-1 libu2f-udev libvulkan1 \
     xdg-utils curl && rm -rf /var/lib/apt/lists/*
-
-# Use the existing node user instead of creating new one
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
@@ -59,19 +57,17 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
-COPY --from=backend-builder --chown=node:node /app/dist ./dist
-COPY --from=backend-builder --chown=node:node /app/dist-frontend ./dist-frontend
-COPY --from=backend-builder --chown=node:node /app/node_modules ./node_modules
-COPY --from=backend-builder --chown=node:node /app/package.json ./
+COPY --from=backend-builder /app/dist ./dist
+COPY --from=backend-builder /app/dist-frontend ./dist-frontend
+COPY --from=backend-builder /app/node_modules ./node_modules
+COPY --from=backend-builder /app/package.json ./
 
 # Copy the startup and healthcheck scripts
-COPY --chown=node:node start.sh ./start.sh
-COPY --chown=node:node healthcheck.sh ./healthcheck.sh
+COPY start.sh ./start.sh
+COPY healthcheck.sh ./healthcheck.sh
 RUN chmod +x start.sh healthcheck.sh
 
-RUN mkdir -p /app/uploads /app/logs && chown -R node:node /app
-
-USER node
+RUN mkdir -p /app/uploads /app/logs
 
 # Default port, but can be overridden via PORT environment variable
 ENV PORT=3000
