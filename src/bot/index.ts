@@ -119,19 +119,49 @@ async function handleMenu(interaction: UserContextMenuCommandInteraction | Messa
 	try {
 		const menu = menus.find(cmd => cmd.info.name == interaction.commandName);
 		if (menu == null) {
-			await interaction.reply({
-				content: `❌ Error: Command \`${interaction.commandName}\` not found.`,
-				flags: MessageFlags.Ephemeral
-			});
+			try {
+				await interaction.reply({
+					content: `❌ Error: Command \`${interaction.commandName}\` not found.`,
+					flags: MessageFlags.Ephemeral
+				});
+			} catch (replyError) {
+				logger.error("Failed to reply for missing menu command:", replyError);
+			}
 		} else {
 			try {
 				await menu.handle(interaction);
 			} catch (error) {
 				logger.error("Failed to handle menu", error);
+				// Try to provide user feedback if interaction hasn't been handled
+				try {
+					if (!interaction.replied && !interaction.deferred) {
+						await interaction.reply({
+							content: "❌ An error occurred while processing your request.",
+							flags: MessageFlags.Ephemeral
+						});
+					} else if (interaction.deferred && !interaction.replied) {
+						await interaction.editReply({
+							content: "❌ An error occurred while processing your request."
+						});
+					}
+				} catch (feedbackError) {
+					logger.error("Failed to send error feedback to user:", feedbackError);
+				}
 			}
 		}
 	} catch (error) {
 		logger.error("Error handling context menu:", error);
+		// Last resort: try to provide feedback
+		try {
+			if (!interaction.replied && !interaction.deferred) {
+				await interaction.reply({
+					content: "❌ An error occurred while processing your request.",
+					flags: MessageFlags.Ephemeral
+				});
+			}
+		} catch (feedbackError) {
+			logger.error("Failed to send error feedback (last resort):", feedbackError);
+		}
 	}
 }
 

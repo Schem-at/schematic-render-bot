@@ -13,10 +13,50 @@ function shouldLog(level: LogLevel): boolean {
   return LOG_LEVELS[level] <= LOG_LEVELS[currentLevel];
 }
 
+function serializeError(error: any): any {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      ...(error.cause && { cause: serializeError(error.cause) }),
+    };
+  }
+  return error;
+}
+
 function formatMessage(level: LogLevel, message: string, ...args: any[]): string {
   const timestamp = new Date().toISOString();
   const prefix = `[${timestamp}] [${level.toUpperCase()}]`;
-  return `${prefix} ${message} ${args.length ? JSON.stringify(args) : ''}`;
+
+  if (args.length === 0) {
+    return `${prefix} ${message}`;
+  }
+
+  // Serialize args, handling Error objects specially
+  const serializedArgs = args.map(arg => {
+    if (arg instanceof Error) {
+      return serializeError(arg);
+    }
+    // Try to serialize, but handle circular references and non-serializable values
+    try {
+      return JSON.parse(JSON.stringify(arg, (key, value) => {
+        if (value instanceof Error) {
+          return serializeError(value);
+        }
+        // Handle undefined values
+        if (value === undefined) {
+          return '[undefined]';
+        }
+        return value;
+      }));
+    } catch (e) {
+      // If serialization fails, return string representation
+      return String(arg);
+    }
+  });
+
+  return `${prefix} ${message} ${JSON.stringify(serializedArgs)}`;
 }
 
 export const logger = {

@@ -88,6 +88,16 @@ export function App() {
 			if (!canvasRef.current) return;
 
 			try {
+				// Check for crypto.subtle availability (required for resource pack hash calculation)
+				if (!window.crypto || !window.crypto.subtle) {
+					const isSecureContext = window.isSecureContext;
+					const protocol = window.location.protocol;
+					console.warn("⚠️ crypto.subtle is not available. This may cause resource pack loading issues.");
+					console.warn(`   Protocol: ${protocol}, Secure Context: ${isSecureContext}`);
+					console.warn("   crypto.subtle requires HTTPS (or localhost in some browsers).");
+					console.warn("   Resource pack hash calculation may fail.");
+				}
+
 				console.log("Initializing SchematicRenderer...");
 				setStatus("initializing");
 
