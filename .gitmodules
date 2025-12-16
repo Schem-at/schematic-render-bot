@@ -1,0 +1,3 @@
+[submodule "libs/schematic-renderer"]
+	path = libs/schematic-renderer
+	url = https://github.com/Nano112/schematic-renderer

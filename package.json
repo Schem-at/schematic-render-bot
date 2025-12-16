@@ -5,7 +5,7 @@
 	"main": "dist/app.js",
 	"type": "module",
 	"scripts": {
-		"setup-libs": "cd libs && rm -rf schematic-renderer && rm -rf ../node_modules/schematic-renderer && rm -rf ../frontend/node_modules/schematic-renderer && ls *.tgz | head -1 | xargs -I {} tar -xzf {} && mv package schematic-renderer && mkdir -p ../node_modules && cp -r schematic-renderer ../node_modules/ && mkdir -p ../frontend/node_modules && cp -r schematic-renderer ../frontend/node_modules/",
+		"setup-libs": "rm -rf node_modules/schematic-renderer && rm -rf frontend/node_modules/schematic-renderer && mkdir -p node_modules && mkdir -p frontend/node_modules && cd libs && rm -rf schematic-renderer && ls *.tgz | head -1 | xargs -I {} tar -xzf {} && mv package schematic-renderer && cp -R schematic-renderer ../node_modules/ && cp -R schematic-renderer ../frontend/node_modules/",
 		"clean-libs": "rm -rf libs/schematic-renderer node_modules/schematic-renderer frontend/node_modules/schematic-renderer",
 		"clean": "rm -rf dist-frontend dist node_modules frontend/node_modules",
 		"build:frontend": "cd frontend && bun run build && cp -r dist ../dist-frontend",
