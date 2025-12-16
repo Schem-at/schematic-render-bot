@@ -1,12 +1,12 @@
-import { 
-	Client, 
-	GatewayIntentBits, 
-	Events, 
-	ActivityType, 
-	ChatInputCommandInteraction, 
-	MessageFlags, 
-	UserContextMenuCommandInteraction, 
-	MessageContextMenuCommandInteraction 
+import {
+	Client,
+	GatewayIntentBits,
+	Events,
+	ActivityType,
+	ChatInputCommandInteraction,
+	MessageFlags,
+	UserContextMenuCommandInteraction,
+	MessageContextMenuCommandInteraction
 } from "discord.js";
 import { logger } from "../shared/logger.js";
 import { commands, menus, registerCommands, syncCommands } from "./command.js";
