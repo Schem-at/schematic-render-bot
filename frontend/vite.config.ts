@@ -7,6 +7,12 @@ export default defineConfig({
 	define: {
 		global: "globalThis",
 	},
+	server: {
+		port: 5173,
+		strictPort: false, // Allow fallback to another port if 5173 is taken
+		host: true, // Listen on all addresses
+		cors: true, // Enable CORS for backend proxy
+	},
 	build: {
 		rollupOptions: {
 			output: {
@@ -16,19 +22,16 @@ export default defineConfig({
 			},
 		},
 	},
-	
-
-  // 2. Add this 'resolve' block. This is the fix.
-  resolve: {
-    alias: {
-      // This tells Vite that whenever it sees an import for "three",
-      // it should look for it in the `node_modules/three` directory
-      // relative to this config file. This creates a single source of truth.
-      three: path.resolve(__dirname, "./node_modules/three"),
-    },
-  },
+	resolve: {
+		alias: {
+			// This tells Vite that whenever it sees an import for "three",
+			// it should look for it in the `node_modules/three` directory
+			// relative to this config file. This creates a single source of truth.
+			three: path.resolve(__dirname, "./node_modules/three"),
+		},
+	},
 	optimizeDeps: {
 		include: ["three"],
-    	exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util']
-  }
+		exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util']
+	}
 });

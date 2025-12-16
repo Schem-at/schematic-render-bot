@@ -34,11 +34,13 @@ declare global {
 				frameRate?: number;
 			}) => Promise<Blob>;
 			takeScreenshot: (options?: any) => Promise<Blob>;
+			downloadScreenshot: (options?: any) => Promise<void>;
 			isReady: () => boolean;
 			waitForReady: () => Promise<boolean>;
 			clearScene: () => Promise<void>;
 		};
 		schematicRendererInitialized?: boolean; // Made optional
+		rendererRef?: any; // Expose for debugging in puppeteer
 	}
 }
 
@@ -105,38 +107,88 @@ export function App() {
 					console.warn("FFmpeg instance exists but is not loaded yet");
 				}
 
-const renderer = new SchematicRenderer(
-	canvasRef.current,
-	{},
-	{
-		vanillaPack: async () => {
-			console.log("Loading pack.zip...");
-			const response = await fetch("/pack.zip");
-			if (!response.ok) {
-				throw new Error(`Failed to load pack.zip: ${response.status}`);
-			}
-			const buffer = await response.arrayBuffer();
-			console.log("✅ pack.zip loaded, size:", buffer.byteLength);
-			return new Blob([buffer], { type: "application/zip" });
-		},
-	},
-	{
-		ffmpeg: ffmpeg,
-		enableDragAndDrop: true,
-		callbacks: {
-			onRendererInitialized: async (
-				rendererInstance: SchematicRenderer
-			) => {
-				if (!mounted) return;
-				console.log("✅ SchematicRenderer initialized successfully");
-				rendererRef.current = rendererInstance;
-				setStatus("ready");
+				const renderer = new SchematicRenderer(
+					canvasRef.current,
+					{},
+					{
+						vanillaPack: async () => {
+							console.log("Loading pack.zip...");
+							const response = await fetch("/pack.zip");
+							if (!response.ok) {
+								throw new Error(`Failed to load pack.zip: ${response.status}`);
+							}
+							const buffer = await response.arrayBuffer();
+							console.log("✅ pack.zip loaded, size:", buffer.byteLength);
+							return new Blob([buffer], { type: "application/zip" });
+						},
+					},
+					{
+						enableAdaptiveFPS: false,
 
-				window.schematicRendererInitialized = true;
-			},
-		},
-	}
-);
+						ffmpeg: ffmpeg,
+						enableDragAndDrop: true,
+						// Disable visual helpers for cleaner screenshots
+						showGrid: false,
+						showAxes: false,
+						showCameraPathVisualization: false,
+						showRenderingBoundsHelper: false,
+						callbacks: {
+							onRendererInitialized: async (
+								rendererInstance: SchematicRenderer
+							) => {
+								if (!mounted) return;
+								console.log("✅ SchematicRenderer initialized successfully");
+								rendererRef.current = rendererInstance;
+								setStatus("ready");
+
+								window.schematicRendererInitialized = true;
+								// Expose for debugging in puppeteer
+								window.rendererRef = rendererRef;
+							},
+							onSchematicRendered: (schematicName: string) => {
+								console.log("🎨 onSchematicRendered fired for:", schematicName);
+
+								// Use setTimeout to ensure this doesn't block
+								setTimeout(async () => {
+									// Small delay to ensure canvas has rendered
+									await new Promise(resolve => setTimeout(resolve, 300));
+
+									// Force a few renders to ensure canvas is updated
+									for (let i = 0; i < 3; i++) {
+										rendererRef.current?.renderManager?.render();
+										await new Promise(resolve => requestAnimationFrame(resolve));
+									}
+
+									// Get final scene stats
+									const scene = rendererRef.current?.sceneManager?.scene;
+									const meshCount = scene?.children.filter(
+										(child: any) => child.type === 'Mesh' || child.type === 'Group'
+									).length || 0;
+
+									console.log("📊 Scene stats:", {
+										meshCount,
+										totalChildren: scene?.children.length,
+										canvasSize: {
+											width: rendererRef.current?.renderManager?.renderer.domElement.width,
+											height: rendererRef.current?.renderManager?.renderer.domElement.height
+										}
+									});
+
+									// Fire event for puppeteer backend
+									const event = new CustomEvent("schematicRenderComplete", {
+										detail: {
+											schematicName,
+											meshCount,
+											buildTimeMs: performance.now(),
+										},
+									});
+									window.dispatchEvent(event);
+									console.log("📡 Fired schematicRenderComplete event with", meshCount, "meshes");
+								}, 0);
+							},
+						},
+					}
+				);
 
 				rendererRef.current = renderer;
 			} catch (error) {
@@ -157,46 +209,48 @@ const renderer = new SchematicRenderer(
 					throw new Error("Renderer not initialized");
 				}
 
-				console.log(`Loading schematic: ${name}`);
+				console.log(`🔄 Loading schematic: ${name}`);
 
 				const buffer =
 					typeof data === "string" ? base64ToArrayBuffer(data) : data;
 
-				return new Promise((resolve, reject) => {
+				try {
+					// Clear any existing schematic first
 					try {
-						// Clear any existing schematic first
-						try {
-							if (rendererRef.current?.schematicManager) {
-								rendererRef.current.schematicManager.removeAllSchematics();
-							}
-						} catch (clearError) {
-							console.warn(
-								"Failed to clear existing schematics, continuing:",
-								clearError
-							);
-						}
-
-						// Load new schematic
 						if (rendererRef.current?.schematicManager) {
-							rendererRef.current.schematicManager.loadSchematic(
-								name,
-								buffer,
-								{}
-							);
+							await rendererRef.current.schematicManager.removeAllSchematics();
 						}
-
-						requestAnimationFrame(() => {
-							setTimeout(() => {
-								setCurrentSchematic(name);
-								console.log(`✅ Schematic loaded: ${name}`);
-								resolve();
-							}, 200);
-						});
-					} catch (error) {
-						console.error(`❌ Failed to load schematic: ${error}`);
-						reject(error);
+					} catch (clearError) {
+						console.warn(
+							"Failed to clear existing schematics, continuing:",
+							clearError
+						);
 					}
-				});
+
+					// Load new schematic - THIS is async and must be awaited!
+					if (rendererRef.current?.schematicManager) {
+						await rendererRef.current.schematicManager.loadSchematic(
+							name,
+							buffer,
+							{}
+						);
+					}
+
+					// Now get the schematic object and wait for meshes to be ready
+					const schematicObject = rendererRef.current?.schematicManager?.schematics.get(name);
+					if (schematicObject) {
+						console.log("⏳ Waiting for meshes to be built...");
+						// getMeshes() is public and waits for meshesReady internally
+						const meshes = await schematicObject.getMeshes();
+						console.log(`✅ Meshes are ready! Built ${meshes.length} mesh objects`);
+					}
+
+					setCurrentSchematic(name);
+					console.log(`✅ Schematic fully loaded: ${name}`);
+				} catch (error) {
+					console.error(`❌ Failed to load schematic: ${error}`);
+					throw error;
+				}
 			},
 			startVideoRecording: async (options = {}): Promise<Blob> => {
 				if (!rendererRef.current?.cameraManager?.recordingManager) {
@@ -256,7 +310,7 @@ const renderer = new SchematicRenderer(
 					throw new Error("Recording manager not available");
 				}
 
-				console.log("Taking screenshot with options:", options);
+				console.log("📸 Taking screenshot with options:", options);
 
 				const defaultOptions = {
 					width: 1920,
@@ -268,16 +322,94 @@ const renderer = new SchematicRenderer(
 				const screenshotOptions = { ...defaultOptions, ...options };
 
 				try {
-					const blob =
-						await rendererRef.current.cameraManager.recordingManager.takeScreenshot(
-							screenshotOptions
-						);
-					console.log("✅ Screenshot taken successfully");
+					// Debug: Check scene state BEFORE taking screenshot
+					const scene = rendererRef.current.sceneManager?.scene;
+					const renderer = rendererRef.current.renderManager?.renderer;
+					const camera = rendererRef.current.cameraManager?.activeCamera?.camera as THREE.PerspectiveCamera;
+
+					console.log("🔍 Pre-screenshot state:", {
+						sceneChildren: scene?.children.length,
+						meshes: scene?.children.filter((c: any) => c.type === 'Mesh' || c.type === 'Group').length,
+						canvasSize: { width: renderer?.domElement.width, height: renderer?.domElement.height },
+						cameraAspect: camera?.aspect
+					});
+
+					// Store original settings to restore after
+					const originalWidth = renderer?.domElement.width || 0;
+					const originalHeight = renderer?.domElement.height || 0;
+					const originalPixelRatio = renderer?.getPixelRatio() || 1;
+					const originalAspect = camera?.aspect || 1;
+
+					// Manually resize canvas and update camera BEFORE calling takeScreenshot
+					const targetWidth = screenshotOptions.width;
+					const targetHeight = screenshotOptions.height;
+					const targetAspect = targetWidth / targetHeight;
+
+					console.log(`📐 Pre-resizing canvas to ${targetWidth}x${targetHeight} (aspect: ${targetAspect.toFixed(2)})`);
+
+					renderer?.setPixelRatio(1.0);
+					renderer?.setSize(targetWidth, targetHeight, false);
+					camera.aspect = targetAspect;
+					camera.updateProjectionMatrix();
+
+					// Now refocus the camera for the new aspect ratio
+					console.log("🎯 Refocusing camera for new aspect ratio...");
+					await rendererRef.current.cameraManager.focusOnSchematics({
+						animationDuration: 0,
+						padding: 0.15
+					});
+
+					// Force render passes to stabilize
+					for (let i = 0; i < 3; i++) {
+						rendererRef.current.renderManager?.render();
+						await new Promise(resolve => requestAnimationFrame(resolve));
+					}
+
+					console.log("📷 Taking screenshot with pre-configured canvas...");
+
+					// Now call takeScreenshot - it will resize again but to the same size (no-op)
+					const blob = await rendererRef.current.cameraManager.recordingManager.takeScreenshot(
+						screenshotOptions
+					);
+
+					// Restore original settings (takeScreenshot also restores, but this ensures it)
+					console.log(`🔄 Restoring canvas to ${originalWidth}x${originalHeight}`);
+					renderer?.setSize(originalWidth, originalHeight, false);
+					renderer?.setPixelRatio(originalPixelRatio);
+					camera.aspect = originalAspect;
+					camera.updateProjectionMatrix();
+
+					// Refocus for original aspect ratio
+					await rendererRef.current.cameraManager.focusOnSchematics({
+						animationDuration: 0,
+						padding: 0.15
+					});
+
+					console.log("✅ Screenshot blob size:", blob.size, "bytes");
+
+					// Warn if blob is suspiciously small
+					if (blob.size < 5000) {
+						console.warn("⚠️ Screenshot is very small! Might be empty. Expected >5KB for a real image.");
+					}
+
 					return blob;
 				} catch (error) {
 					console.error("❌ Screenshot failed:", error);
 					throw error;
 				}
+			},
+
+			downloadScreenshot: async (options = {}): Promise<void> => {
+				console.log("Downloading screenshot with options:", options);
+
+				// Call our own takeScreenshot with all the stabilization logic
+				const blob = await window.schematicHelpers!.takeScreenshot(options);
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = 'screenshot.png';
+				a.click();
+				URL.revokeObjectURL(url);
 			},
 
 			clearScene: async (): Promise<void> => {
@@ -390,6 +522,7 @@ const renderer = new SchematicRenderer(
 					<div className="space-y-1">
 						<div>• window.schematicHelpers.loadSchematic(name, data)</div>
 						<div>• window.schematicHelpers.takeScreenshot(options)</div>
+						<div>• window.schematicHelpers.downloadScreenshot(options)</div>
 						<div>• window.schematicHelpers.isReady()</div>
 						<div>• window.schematicHelpers.waitForReady()</div>
 					</div>

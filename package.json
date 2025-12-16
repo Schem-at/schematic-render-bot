@@ -7,13 +7,15 @@
 	"scripts": {
 		"setup-libs": "cd libs && rm -rf schematic-renderer && rm -rf ../node_modules/schematic-renderer && rm -rf ../frontend/node_modules/schematic-renderer && ls *.tgz | head -1 | xargs -I {} tar -xzf {} && mv package schematic-renderer && mkdir -p ../node_modules && cp -r schematic-renderer ../node_modules/ && mkdir -p ../frontend/node_modules && cp -r schematic-renderer ../frontend/node_modules/",
 		"clean-libs": "rm -rf libs/schematic-renderer node_modules/schematic-renderer frontend/node_modules/schematic-renderer",
+		"clean": "rm -rf dist-frontend dist node_modules frontend/node_modules",
 		"build:frontend": "cd frontend && bun run build && cp -r dist ../dist-frontend",
 		"build:backend": "bun run setup-libs && tsc",
 		"build": "bun run build:frontend && bun run build:backend",
-		"dev:backend": "bun --env-file=.env src/app.ts",
+		"build:clean": "bun run clean && cd frontend && bun i && cd .. && bun i && bun run build",
+		"dev:backend": "NODE_ENV=development bun --env-file=.env src/app.ts",
 		"dev:frontend": "cd frontend && bun run dev",
-		"dev": "concurrently \"bun run dev:backend\" \"bun run dev:frontend\"",
-		"start": "bun --env-file=.env dist/app.js"
+		"dev": "concurrently -n vite,backend -c cyan,green \"bun run dev:frontend\" \"sleep 3 && bun run dev:backend\"",
+		"start": "NODE_ENV=production bun --env-file=.env dist/app.js"
 	},
 	"dependencies": {
 		"connect-timeout": "^1.9.0",
@@ -36,8 +38,9 @@
 		"@types/express": "^4.17.21",
 		"@types/morgan": "^1.9.9",
 		"@types/multer": "^1.4.11",
-		"@types/node": "^20.9.0",
+		"@types/node": "^25.0.2",
 		"concurrently": "^8.2.2",
+		"http-proxy-middleware": "^3.0.5",
 		"nodemon": "^3.0.1",
 		"tsx": "^4.4.0",
 		"typescript": "^5.2.2"

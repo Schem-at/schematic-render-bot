@@ -16,7 +16,7 @@ declare global {
 				height: number;
 				format: "image/png" | "image/jpeg";
 			}) => Promise<Blob>;
-			startVideoRecording: (options?: {  
+			startVideoRecording: (options?: {
 				duration?: number;
 				width?: number;
 				height?: number;
@@ -36,7 +36,7 @@ export async function renderSchematic(
 	// Create a new isolated browser instance for this render
 	const { browser, page, id: browserId } = await createIsolatedBrowser();
 	const startTime = Date.now();
-	
+
 	trackRenderStart(browserId, 'image', schematicData.length);
 
 	try {
@@ -63,18 +63,22 @@ export async function renderSchematic(
 					},
 					{ once: true }
 				);
+
+				console.log("✅ Event listener registered for schematicRenderComplete");
 			});
 
 			// THEN load schematic (will trigger the event)
 			try {
+				console.log("🔄 Loading schematic...");
 				await window.schematicHelpers.loadSchematic("api-schematic", data);
 				console.log("✅ Schematic loading initiated");
 			} catch (error: any) {
-				console.error("Failed to load schematic:", error.message || error);
+				console.error("❌ Failed to load schematic:", error.message || error);
 				throw error;
 			}
 
 			// Wait for the render complete event
+			console.log("⏳ Waiting for render complete event...");
 			return renderPromise;
 		}, base64Data);
 
@@ -82,26 +86,45 @@ export async function renderSchematic(
 			`[${browserId}] Schematic rendered successfully: ${renderData.meshCount} meshes in ${renderData.buildTimeMs}ms`
 		);
 
-		// Take screenshot
+		// Add extra delay to ensure canvas is fully updated after render event
+		logger.info(`[${browserId}] Waiting for canvas to stabilize...`);
+		await new Promise(resolve => setTimeout(resolve, 1000));
+
+		// Take screenshot with detailed logging
+		logger.info(`[${browserId}] Taking screenshot...`);
 		const screenshotBlob = await page.evaluate(async (opts) => {
 			if (window.schematicHelpers == undefined) {
 				throw new Error("Schematic helpers not initialized");
 			}
-			console.log("Taking screenshot with options:", JSON.stringify(opts, null, 2));
-			
+
+			// Log scene state before screenshot
+			const scene = (window as any).rendererRef?.current?.sceneManager?.scene;
+			const canvas = (window as any).rendererRef?.current?.renderManager?.renderer.domElement;
+			console.log("📊 Pre-screenshot state:", {
+				sceneChildren: scene?.children.length,
+				canvasWidth: canvas?.width,
+				canvasHeight: canvas?.height,
+			});
+
+			console.log("📸 Taking screenshot with options:", JSON.stringify(opts, null, 2));
+
 			const blob = await window.schematicHelpers.takeScreenshot({
 				width: opts.width || 1920,
 				height: opts.height || 1080,
 				format: opts.format || "image/png",
 			});
 
+			console.log("✅ Screenshot blob size:", blob.size);
+
 			const arrayBuffer = await blob.arrayBuffer();
 			return Array.from(new Uint8Array(arrayBuffer));
 		}, options);
 
+		logger.info(`[${browserId}] Screenshot blob received, size: ${screenshotBlob.length} bytes`);
+
 		const duration = Date.now() - startTime;
 		trackRenderComplete(browserId, duration, renderData.meshCount);
-		
+
 		return Buffer.from(screenshotBlob);
 	} catch (error) {
 		logger.error(`[${browserId}] Error in renderSchematic:`, error);
@@ -123,7 +146,7 @@ export async function renderSchematicVideo(
 	// Create a new isolated browser instance for this render
 	const { browser, page, id: browserId } = await createIsolatedBrowser();
 	const startTime = Date.now();
-	
+
 	trackRenderStart(browserId, 'video', schematicData.length);
 
 	try {
@@ -161,6 +184,9 @@ export async function renderSchematicVideo(
 
 		logger.info(`[${browserId}] Schematic loaded, starting video recording...`);
 
+		// Add extra delay to ensure canvas is fully updated
+		await new Promise(resolve => setTimeout(resolve, 1000));
+
 		// Record video
 		const videoBlob = await page.evaluate(async (opts) => {
 			if (!window.schematicHelpers?.startVideoRecording) {
@@ -168,7 +194,7 @@ export async function renderSchematicVideo(
 			}
 
 			console.log("Starting video recording with options:", JSON.stringify(opts, null, 2));
-			
+
 			const blob = await window.schematicHelpers.startVideoRecording({
 				duration: opts.duration || 6,
 				width: opts.width || 1920,
@@ -182,7 +208,7 @@ export async function renderSchematicVideo(
 
 		const duration = Date.now() - startTime;
 		trackRenderComplete(browserId, duration, renderData.meshCount);
-		
+
 		logger.info(`[${browserId}] Video recording completed successfully`);
 		return Buffer.from(videoBlob);
 
