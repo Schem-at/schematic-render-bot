@@ -7,11 +7,11 @@ import AdminDashboard from './AdminDashboard.tsx'
 // Simple routing based on pathname
 function Router() {
   const path = window.location.pathname;
-  
+
   if (path === '/admin') {
     return <AdminDashboard />;
   }
-  
+
   return <App />;
 }
 

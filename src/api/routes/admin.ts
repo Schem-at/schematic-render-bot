@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getMetricsStats, getActiveRenders, getRecentRenders, resetMetrics } from "../../services/metrics.js";
-import { getBrowserStatus } from "../../services/puppeteer.js";
+import { getBrowserStatus, getPuppeteerMetrics } from "../../services/puppeteer.js";
 import { logger } from "../../shared/logger.js";
 import os from "os";
 
@@ -82,6 +82,19 @@ router.post("/reset-metrics", (req, res) => {
     } catch (error: any) {
         logger.error("Error resetting metrics:", error);
         res.status(500).json({ error: error.message || "Failed to reset metrics" });
+    }
+});
+
+/**
+ * Get detailed Puppeteer metrics
+ */
+router.get("/puppeteer-metrics", async (req, res) => {
+    try {
+        const puppeteerMetrics = await getPuppeteerMetrics();
+        res.json(puppeteerMetrics);
+    } catch (error: any) {
+        logger.error("Error fetching Puppeteer metrics:", error);
+        res.status(500).json({ error: error.message || "Failed to fetch Puppeteer metrics" });
     }
 });
 

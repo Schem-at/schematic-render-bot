@@ -7,6 +7,11 @@
   overflow: hidden;
 }
 
+/* Allow scrolling for admin dashboard */
+#root.admin-dashboard {
+  overflow: auto;
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;

@@ -19,17 +19,17 @@ router.get("/performance", (req, res) => {
       FROM renders
       WHERE status = 'completed' AND duration IS NOT NULL
     `).get() as any;
-    
+
     const durations = db.prepare(`
       SELECT duration FROM renders 
       WHERE status = 'completed' AND duration IS NOT NULL 
       ORDER BY duration ASC
     `).all() as Array<{ duration: number }>;
-    
+
     const p50 = durations[Math.floor(durations.length * 0.5)]?.duration || 0;
     const p95 = durations[Math.floor(durations.length * 0.95)]?.duration || 0;
     const p99 = durations[Math.floor(durations.length * 0.99)]?.duration || 0;
-    
+
     res.json({
       data: {
         avgDuration: perf?.avgDuration || 0,
@@ -53,7 +53,7 @@ router.get("/renders", (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
     const renders = statements.getRecentRenders.all(limit);
-    
+
     res.json({ renders });
   } catch (error: any) {
     logger.error("Error fetching renders:", error);
@@ -68,7 +68,7 @@ router.get("/top-files", (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 10;
     const topFiles = statements.getTopFiles.all(limit);
-    
+
     res.json({ files: topFiles });
   } catch (error: any) {
     logger.error("Error fetching top files:", error);
@@ -93,7 +93,7 @@ router.get("/outliers", (req, res) => {
       ORDER BY r.duration DESC
       LIMIT ?
     `).all(limit);
-    
+
     res.json({ renders: outliers || [] });
   } catch (error: any) {
     logger.error("Error fetching outliers:", error);
@@ -108,18 +108,18 @@ router.get("/thumbnail/:fileHash", async (req, res) => {
   try {
     const { fileHash } = req.params;
     const thumbnail = getThumbnail(fileHash) as any;
-    
+
     if (!thumbnail) {
       return res.status(404).json({ error: "Thumbnail not found" });
     }
-    
+
     // Read thumbnail file and send
     const imageBuffer = await fs.readFile(thumbnail.file_path);
-    
+
     res.set('Content-Type', thumbnail.mime_type || 'image/png');
     res.set('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
     res.send(imageBuffer);
-    
+
   } catch (error: any) {
     logger.error("Error fetching thumbnail:", error);
     res.status(500).json({ error: error.message });
@@ -133,13 +133,13 @@ router.get("/render/:id", (req, res) => {
   try {
     const { id } = req.params;
     const render = statements.getRenderById.get(id);
-    
+
     if (!render) {
       return res.status(404).json({ error: "Render not found" });
     }
-    
+
     const artifacts = db.prepare('SELECT * FROM artifacts WHERE render_id = ?').all(id);
-    
+
     res.json({ render, artifacts });
   } catch (error: any) {
     logger.error("Error fetching render:", error);
@@ -153,11 +153,12 @@ router.get("/render/:id", (req, res) => {
 router.get("/timeline", (req, res) => {
   try {
     const hours = parseInt(req.query.hours as string) || 24;
-    const since = Math.floor(Date.now() / 1000) - (hours * 60 * 60);
-    
+    // start_time is stored in milliseconds, so convert hours to milliseconds
+    const since = Date.now() - (hours * 60 * 60 * 1000);
+
     const timeline = db.prepare(`
       SELECT 
-        strftime('%H:00', datetime(start_time, 'unixepoch', 'localtime')) as hour,
+        strftime('%H:00', datetime(start_time / 1000, 'unixepoch', 'localtime')) as hour,
         COUNT(*) as renders,
         AVG(CASE WHEN status = 'completed' THEN duration ELSE NULL END) as avgDuration
       FROM renders
@@ -165,8 +166,15 @@ router.get("/timeline", (req, res) => {
       GROUP BY hour
       ORDER BY hour ASC
     `).all(since);
-    
-    res.json({ data: timeline || [] });
+
+    // Ensure avgDuration is a number (handle NULL values)
+    const normalizedTimeline = (timeline || []).map((item: any) => ({
+      ...item,
+      renders: Number(item.renders) || 0,
+      avgDuration: item.avgDuration ? Math.round(Number(item.avgDuration)) : 0,
+    }));
+
+    res.json({ data: normalizedTimeline });
   } catch (error: any) {
     logger.error("Error fetching timeline:", error);
     res.status(500).json({ error: error.message });
@@ -184,13 +192,13 @@ router.get("/distribution", (req, res) => {
       WHERE status = 'completed'
       GROUP BY type
     `).all();
-    
+
     const byStatus = db.prepare(`
       SELECT status, COUNT(*) as count
       FROM renders
       GROUP BY status
     `).all();
-    
+
     res.json({
       byType: byType || [],
       byStatus: byStatus || [],

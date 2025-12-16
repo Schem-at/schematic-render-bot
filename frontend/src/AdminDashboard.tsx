@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
 import { Button } from './components/ui/button';
 import { Badge } from './components/ui/badge';
-import { 
-  RefreshCw, Trash2, Home, Activity, XCircle, 
+import {
+  RefreshCw, Trash2, Home, Activity, XCircle,
   Clock, HardDrive, Cpu, Globe, TrendingUp, Image as ImageIcon,
   BarChart3, LineChart, PieChart
 } from 'lucide-react';
@@ -58,6 +58,32 @@ interface MetricsData {
   };
 }
 
+interface PuppeteerMetrics {
+  initialized: boolean;
+  activeBrowsers: number;
+  totalPages: number;
+  browserMemoryUsage: number;
+  browserPerformance: Array<{
+    id: string;
+    uptime: number;
+    pageCount: number;
+    performance: {
+      jsHeapSizeUsed: number;
+      jsHeapTotalSize: number;
+      jsHeapSizeLimit: number;
+      tasks: number;
+      layouts: number;
+      recalculates: number;
+    } | null;
+  }>;
+  systemResources: {
+    nodeVersion: string;
+    platform: string;
+    architecture: string;
+    uptime: number;
+  };
+}
+
 interface AnalyticsData {
   timeline: Array<{ hour: string; renders: number; avgDuration: number }>;
   performance: {
@@ -86,6 +112,7 @@ export function AdminDashboard() {
   const [activeRenders, setActiveRenders] = useState<RenderMetric[]>([]);
   const [renderHistory, setRenderHistory] = useState<RenderMetric[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [puppeteerMetrics, setPuppeteerMetrics] = useState<PuppeteerMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -128,16 +155,23 @@ export function AdminDashboard() {
   const fetchAnalytics = async () => {
     try {
       const [timeline, performance, distribution, outliers, topFiles] = await Promise.all([
-        fetch('/api/analytics/timeline?hours=24').then(r => r.json()),
-        fetch('/api/analytics/performance').then(r => r.json()),
-        fetch('/api/analytics/distribution').then(r => r.json()),
-        fetch('/api/analytics/outliers?limit=12').then(r => r.json()),
-        fetch('/api/analytics/top-files?limit=10').then(r => r.json()),
+        fetch('/api/analytics/timeline?hours=24').then(r => r.json()).catch(() => ({ data: [] })),
+        fetch('/api/analytics/performance').then(r => r.json()).catch(() => ({ data: {} })),
+        fetch('/api/analytics/distribution').then(r => r.json()).catch(() => ({ byType: [], byStatus: [] })),
+        fetch('/api/analytics/outliers?limit=12').then(r => r.json()).catch(() => ({ renders: [] })),
+        fetch('/api/analytics/top-files?limit=10').then(r => r.json()).catch(() => ({ files: [] })),
       ]);
 
       setAnalytics({
         timeline: timeline.data || [],
-        performance: performance.data || {},
+        performance: performance.data || {
+          avgDuration: 0,
+          p50: 0,
+          p95: 0,
+          p99: 0,
+          fastest: 0,
+          slowest: 0,
+        },
         distribution: {
           byType: distribution.byType || [],
           byStatus: distribution.byStatus || [],
@@ -147,12 +181,41 @@ export function AdminDashboard() {
       });
     } catch (err: any) {
       console.error('Error fetching analytics:', err);
+      // Set default empty analytics data to prevent charts from disappearing
+      setAnalytics({
+        timeline: [],
+        performance: {
+          avgDuration: 0,
+          p50: 0,
+          p95: 0,
+          p99: 0,
+          fastest: 0,
+          slowest: 0,
+        },
+        distribution: {
+          byType: [],
+          byStatus: [],
+        },
+        outliers: [],
+        topFiles: [],
+      });
+    }
+  };
+
+  const fetchPuppeteerMetrics = async () => {
+    try {
+      const response = await fetch('/api/admin/puppeteer-metrics');
+      if (!response.ok) throw new Error('Failed to fetch Puppeteer metrics');
+      const data = await response.json();
+      setPuppeteerMetrics(data);
+    } catch (err: any) {
+      console.error('Error fetching Puppeteer metrics:', err);
     }
   };
 
   const resetMetrics = async () => {
     if (!confirm('Are you sure you want to reset all metrics?')) return;
-    
+
     try {
       const response = await fetch('/api/admin/reset-metrics', { method: 'POST' });
       if (!response.ok) throw new Error('Failed to reset metrics');
@@ -169,12 +232,20 @@ export function AdminDashboard() {
       fetchActiveRenders(),
       fetchRenderHistory(),
       fetchAnalytics(),
+      fetchPuppeteerMetrics(),
     ]);
     setLoading(false);
   };
 
   useEffect(() => {
     fetchAllData();
+    // Add admin-dashboard class to allow scrolling
+    document.getElementById('root')!.classList.add('admin-dashboard');
+
+    // Cleanup function to remove the class when component unmounts
+    return () => {
+      document.getElementById('root')!.classList.remove('admin-dashboard');
+    };
   }, []);
 
   useEffect(() => {
@@ -382,30 +453,39 @@ export function AdminDashboard() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <AreaChart data={analytics.timeline}>
-                        <defs>
-                          <linearGradient id="colorRenders" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#8884d8" stopOpacity={0.8}/>
-                            <stop offset="95%" stopColor="#8884d8" stopOpacity={0}/>
-                          </linearGradient>
-                          <linearGradient id="colorDuration" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#82ca9d" stopOpacity={0.8}/>
-                            <stop offset="95%" stopColor="#82ca9d" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                        <XAxis dataKey="hour" className="text-xs" />
-                        <YAxis yAxisId="left" className="text-xs" />
-                        <YAxis yAxisId="right" orientation="right" className="text-xs" />
-                        <Tooltip 
-                          contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
-                        />
-                        <Legend />
-                        <Area yAxisId="left" type="monotone" dataKey="renders" stroke="#8884d8" fillOpacity={1} fill="url(#colorRenders)" name="Renders" />
-                        <Area yAxisId="right" type="monotone" dataKey="avgDuration" stroke="#82ca9d" fillOpacity={1} fill="url(#colorDuration)" name="Avg Duration (ms)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                    {analytics.timeline && analytics.timeline.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={300}>
+                        <AreaChart data={analytics.timeline}>
+                          <defs>
+                            <linearGradient id="colorRenders" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#8884d8" stopOpacity={0.8} />
+                              <stop offset="95%" stopColor="#8884d8" stopOpacity={0} />
+                            </linearGradient>
+                            <linearGradient id="colorDuration" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#82ca9d" stopOpacity={0.8} />
+                              <stop offset="95%" stopColor="#82ca9d" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                          <XAxis dataKey="hour" className="text-xs" />
+                          <YAxis yAxisId="left" className="text-xs" />
+                          <YAxis yAxisId="right" orientation="right" className="text-xs" />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
+                          />
+                          <Legend />
+                          <Area yAxisId="left" type="monotone" dataKey="renders" stroke="#8884d8" fillOpacity={1} fill="url(#colorRenders)" name="Renders" />
+                          <Area yAxisId="right" type="monotone" dataKey="avgDuration" stroke="#82ca9d" fillOpacity={1} fill="url(#colorDuration)" name="Avg Duration (ms)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="flex items-center justify-center h-[300px] text-muted-foreground">
+                        <div className="text-center">
+                          <LineChart className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                          <p>No render data available for the last 24 hours</p>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -431,7 +511,7 @@ export function AdminDashboard() {
                           <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                           <XAxis dataKey="name" className="text-xs" />
                           <YAxis className="text-xs" />
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
                             formatter={(value: number | undefined) => value ? `${value}ms` : 'N/A'}
                           />
@@ -450,31 +530,38 @@ export function AdminDashboard() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <ResponsiveContainer width="100%" height={250}>
-                        <RechartsPie>
-                          <Pie
-                            data={analytics.distribution.byStatus}
-                            dataKey="count"
-                            nameKey="status"
-                            cx="50%"
-                            cy="50%"
-                            outerRadius={80}
-                            label
-                          >
-                            {analytics.distribution.byStatus.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={
-                                entry.status === 'completed' ? '#82ca9d' : 
-                                entry.status === 'failed' ? '#ff6b6b' : 
-                                '#8884d8'
-                              } />
-                            ))}
-                          </Pie>
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
-                          />
-                          <Legend />
-                        </RechartsPie>
-                      </ResponsiveContainer>
+                      {analytics.distribution.byStatus.length > 0 ? (
+                        <ResponsiveContainer width="100%" height={250} key={`pie-${analytics.distribution.byStatus.length}`}>
+                          <RechartsPie>
+                            <Pie
+                              data={analytics.distribution.byStatus}
+                              dataKey="count"
+                              nameKey="status"
+                              cx="50%"
+                              cy="50%"
+                              outerRadius={80}
+                              label
+                            >
+                              {analytics.distribution.byStatus.map((entry, index) => (
+                                <Cell key={`cell-${index}-${entry.status}`} fill={
+                                  entry.status === 'completed' ? '#82ca9d' :
+                                    entry.status === 'failed' ? '#ff6b6b' :
+                                      entry.status === 'running' ? '#8884d8' :
+                                        '#94a3b8'
+                                } />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
+                            />
+                            <Legend />
+                          </RechartsPie>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex items-center justify-center h-[250px] text-muted-foreground">
+                          No render data available
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </div>
@@ -494,7 +581,7 @@ export function AdminDashboard() {
                           <div key={outlier.id} className="group relative">
                             <div className="aspect-square rounded-lg overflow-hidden bg-muted border border-border hover:border-primary transition-colors">
                               {outlier.thumbnail_hash ? (
-                                <img 
+                                <img
                                   src={`/api/analytics/thumbnail/${outlier.thumbnail_hash}`}
                                   alt={`Render ${outlier.id.substring(0, 8)}`}
                                   className="w-full h-full object-cover"
@@ -567,6 +654,90 @@ export function AdminDashboard() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Puppeteer Monitoring */}
+            {puppeteerMetrics && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Globe className="h-5 w-5" />
+                    Puppeteer Monitoring
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">Status</p>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={puppeteerMetrics.initialized ? 'secondary' : 'destructive'}>
+                          {puppeteerMetrics.initialized ? 'Ready' : 'Initializing'}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">Active Browsers</p>
+                      <p className="text-2xl font-bold">{puppeteerMetrics.activeBrowsers}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">Total Pages</p>
+                      <p className="text-2xl font-bold">{puppeteerMetrics.totalPages}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">System Uptime</p>
+                      <p className="text-sm font-medium">{formatUptime(puppeteerMetrics.systemResources.uptime)}</p>
+                    </div>
+                  </div>
+
+                  {puppeteerMetrics.browserPerformance.length > 0 && (
+                    <div className="mt-6">
+                      <h4 className="text-sm font-medium mb-3">Browser Instances</h4>
+                      <div className="space-y-3">
+                        {puppeteerMetrics.browserPerformance.map((browser) => (
+                          <div key={browser.id} className="border rounded-lg p-3 bg-muted/30">
+                            <div className="flex items-center justify-between mb-2">
+                              <code className="text-xs bg-muted px-2 py-1 rounded">
+                                {browser.id.substring(0, 20)}...
+                              </code>
+                              <div className="text-xs text-muted-foreground">
+                                {formatUptime(browser.uptime / 1000)}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4 text-xs">
+                              <div>
+                                <span className="text-muted-foreground">Pages:</span>
+                                <span className="ml-1 font-medium">{browser.pageCount}</span>
+                              </div>
+                              {browser.performance && (
+                                <>
+                                  <div>
+                                    <span className="text-muted-foreground">JS Heap:</span>
+                                    <span className="ml-1 font-medium">
+                                      {formatBytes(browser.performance.jsHeapSizeUsed)}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Tasks:</span>
+                                    <span className="ml-1 font-medium">
+                                      {(browser.performance.tasks || 0).toFixed(2)}ms
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Layout:</span>
+                                    <span className="ml-1 font-medium">
+                                      {(browser.performance.layouts || 0).toFixed(2)}ms
+                                    </span>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Active Renders */}
             {activeRenders.length > 0 && (

@@ -253,7 +253,7 @@ export async function waitForPuppeteerReady(
 }
 
 /**
- * Get browser pool status (for monitoring)
+ * Get detailed browser pool status (for monitoring)
  */
 export function getBrowserStatus() {
 	return {
@@ -264,4 +264,64 @@ export function getBrowserStatus() {
 			uptime: Date.now() - instance.startTime,
 		})),
 	};
+}
+
+/**
+ * Get detailed Puppeteer metrics for monitoring
+ */
+export async function getPuppeteerMetrics() {
+	const metrics = {
+		initialized: isInitialized,
+		activeBrowsers: activeBrowsers.size,
+		totalPages: 0,
+		browserMemoryUsage: 0,
+		browserPerformance: [] as any[],
+		systemResources: {
+			nodeVersion: process.version,
+			platform: process.platform,
+			architecture: process.arch,
+			uptime: process.uptime(),
+		}
+	};
+
+	// Get detailed metrics for each browser
+	for (const [browserId, browserInstance] of activeBrowsers.entries()) {
+		try {
+			const { browser, page, startTime } = browserInstance;
+			const uptime = Date.now() - startTime;
+
+			// Get browser targets (includes pages)
+			const targets = browser.targets();
+			const pages = targets.filter(target => target.type() === 'page');
+
+			// Get performance metrics if available
+			let performanceMetrics = null;
+			try {
+				const perfMetrics = await page.metrics();
+				performanceMetrics = {
+					jsHeapSizeUsed: perfMetrics.JSHeapUsedSize,
+					jsHeapTotalSize: perfMetrics.JSHeapTotalSize,
+					jsHeapSizeLimit: (perfMetrics as any).JSHeapSizeLimit || 0,
+					tasks: perfMetrics.TaskDuration,
+					layouts: perfMetrics.LayoutDuration,
+					recalculates: perfMetrics.RecalcStyleDuration,
+				};
+			} catch (error) {
+				// Performance metrics might not be available
+			}
+
+			metrics.browserPerformance.push({
+				id: browserId,
+				uptime,
+				pageCount: pages.length,
+				performance: performanceMetrics,
+			});
+
+			metrics.totalPages += pages.length;
+		} catch (error) {
+			logger.warn(`Error getting metrics for browser ${browserId}:`, error);
+		}
+	}
+
+	return metrics;
 }
