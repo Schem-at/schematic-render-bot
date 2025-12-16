@@ -97,7 +97,8 @@ export async function initDiscordBot(): Promise<void> {
 
 async function handleCommand(interaction: ChatInputCommandInteraction) {
 	try {
-		const command = commands.find(cmd => cmd.info.name == interaction.commandName);
+		// Filter out any undefined/null entries before searching
+		const command = commands.filter(cmd => cmd && cmd.info).find(cmd => cmd.info.name == interaction.commandName);
 		if (command == null) {
 			await interaction.reply({
 				content: `❌ Error: Command \`${interaction.commandName}\` not found.`,
@@ -117,7 +118,8 @@ async function handleCommand(interaction: ChatInputCommandInteraction) {
 
 async function handleMenu(interaction: UserContextMenuCommandInteraction | MessageContextMenuCommandInteraction) {
 	try {
-		const menu = menus.find(cmd => cmd.info.name == interaction.commandName);
+		// Filter out any undefined/null entries before searching
+		const menu = menus.filter(cmd => cmd && cmd.info).find(cmd => cmd.info.name == interaction.commandName);
 		if (menu == null) {
 			try {
 				await interaction.reply({

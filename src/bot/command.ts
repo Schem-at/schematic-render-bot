@@ -51,7 +51,13 @@ export function registerCommands() {
 		try {
 			const menu = require("./" + path.join('menus', file)).default;
 			if (menu) {
-				menus.push(new menu());
+				const menuInstance = new menu();
+				// Validate the menu instance has required properties
+				if (menuInstance && menuInstance.info && menuInstance.handle) {
+					menus.push(menuInstance);
+				} else {
+					logger.warn(`Menu file ${file} did not export a valid menu class (missing info or handle)`);
+				}
 			} else {
 				logger.warn(`Menu file ${file} did not export a default class`);
 			}
