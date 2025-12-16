@@ -209,5 +209,78 @@ router.get("/distribution", (req, res) => {
   }
 });
 
+/**
+ * Get comprehensive stats and insights
+ */
+router.get("/insights", (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours as string) || 24;
+    const since = Date.now() - (hours * 60 * 60 * 1000);
+
+    // Overall stats
+    const overallStats = db.prepare(`
+      SELECT 
+        COUNT(*) as total_renders,
+        COUNT(DISTINCT file_hash) as unique_schemas,
+        COUNT(DISTINCT CASE WHEN status = 'completed' THEN id END) as successful_renders,
+        COUNT(DISTINCT CASE WHEN status = 'error' THEN id END) as failed_renders,
+        AVG(CASE WHEN status = 'completed' THEN duration END) as avg_duration,
+        SUM(CASE WHEN status = 'completed' THEN file_size END) as total_data_processed
+      FROM renders
+      WHERE start_time >= ?
+    `).get(since) as any;
+
+    // Hourly breakdown
+    const hourlyStats = db.prepare(`
+      SELECT 
+        strftime('%H:00', datetime(start_time / 1000, 'unixepoch', 'localtime')) as hour,
+        COUNT(*) as renders,
+        COUNT(DISTINCT file_hash) as unique_schemas,
+        AVG(CASE WHEN status = 'completed' THEN duration END) as avg_duration
+      FROM renders
+      WHERE start_time >= ?
+      GROUP BY hour
+      ORDER BY hour ASC
+    `).all(since);
+
+    // Source breakdown
+    const sourceStats = db.prepare(`
+      SELECT 
+        COALESCE(source, 'unknown') as source,
+        COUNT(*) as count,
+        AVG(CASE WHEN status = 'completed' THEN duration END) as avg_duration
+      FROM renders
+      WHERE start_time >= ?
+      GROUP BY source
+    `).all(since);
+
+    // File size distribution
+    const sizeDistribution = db.prepare(`
+      SELECT 
+        CASE 
+          WHEN file_size < 1024 THEN '0-1KB'
+          WHEN file_size < 1024 * 10 THEN '1-10KB'
+          WHEN file_size < 1024 * 100 THEN '10-100KB'
+          WHEN file_size < 1024 * 1024 THEN '100KB-1MB'
+          ELSE '1MB+'
+        END as size_range,
+        COUNT(*) as count
+      FROM renders
+      WHERE start_time >= ?
+      GROUP BY size_range
+    `).all(since);
+
+    res.json({
+      overall: overallStats || {},
+      hourly: hourlyStats || [],
+      bySource: sourceStats || [],
+      bySize: sizeDistribution || [],
+    });
+  } catch (error: any) {
+    logger.error("Error fetching insights:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export { router as analyticsRouter };
 

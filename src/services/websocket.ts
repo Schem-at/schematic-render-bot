@@ -1,7 +1,7 @@
 import { logger } from "../shared/logger.js";
-import { getMetricsStats, getActiveRenders, getRecentRenders } from "./metrics.js";
+import { getMetricsStats, getActiveRenders } from "./metrics.js";
 import { getPuppeteerMetrics } from "./puppeteer.js";
-import { db } from "./database.js";
+import { db, statements } from "./database.js";
 
 interface WebSocketClient {
 	socket: WebSocket;
@@ -260,10 +260,31 @@ function fetchActiveRendersData() {
 }
 
 /**
- * Fetch render history data
+ * Fetch render history data from database
  */
 function fetchRenderHistoryData() {
-	return { renders: getRecentRenders(20) };
+	try {
+		// Query database instead of in-memory metrics
+		const dbRenders = statements.getRecentRenders.all(20) as any[];
+
+		// Transform database format to match frontend expectations
+		const renders = dbRenders.map(render => ({
+			id: render.id,
+			type: render.type,
+			status: render.status,
+			startTime: render.start_time,
+			endTime: render.end_time || undefined,
+			duration: render.duration || undefined,
+			fileSize: render.file_size,
+			meshCount: render.mesh_count || undefined,
+			error: render.error_message || undefined,
+		}));
+
+		return { renders };
+	} catch (error: any) {
+		logger.error("[WebSocket] Error fetching render history:", error);
+		return { renders: [] };
+	}
 }
 
 /**
