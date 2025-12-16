@@ -91,6 +91,14 @@ export function App() {
 				console.log("Initializing SchematicRenderer...");
 				setStatus("initializing");
 
+				// Read render options from URL parameters (set by backend)
+				const urlParams = new URLSearchParams(window.location.search);
+				const isometric = urlParams.get('isometric') === 'true';
+				const background = urlParams.get('background') || 'transparent';
+				const cameraPreset = isometric ? 'isometric' : 'perspective';
+
+				console.log(`📐 Initializing renderer with camera preset: ${cameraPreset}, background: ${background}`);
+
 				// Check if pack.zip is accessible
 				try {
 					const packResponse = await fetch("/pack.zip");
@@ -132,6 +140,10 @@ export function App() {
 						showAxes: false,
 						showCameraPathVisualization: false,
 						showRenderingBoundsHelper: false,
+						// Set camera preset during initialization
+						cameraOptions: {
+							defaultCameraPreset: cameraPreset as "perspective" | "isometric",
+						},
 						callbacks: {
 							onRendererInitialized: async (
 								rendererInstance: SchematicRenderer

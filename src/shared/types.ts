@@ -4,14 +4,22 @@ export interface RenderOptions {
   format?: 'image/png' | 'image/jpeg';
   quality?: number;
   autoFrame?: boolean;
+  isometric?: boolean;
+  background?: string;  // hex color or 'transparent'
+  framing?: 'tight' | 'medium' | 'wide';
+  cameraPath?: 'circular' | 'orbit' | 'static' | 'cinematic';
 }
 
 
 export interface VideoRenderOptions {
-	duration?: number;    
-	width?: number;
-	height?: number;
-	frameRate?: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+  frameRate?: number;
+  isometric?: boolean;
+  background?: string;  // hex color or 'transparent'
+  framing?: 'tight' | 'medium' | 'wide';
+  cameraPath?: 'circular' | 'orbit' | 'static' | 'cinematic';
 }
 
 export interface SchematicMetadata {

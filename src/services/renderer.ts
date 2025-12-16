@@ -33,8 +33,11 @@ export async function renderSchematic(
 	// Wait for Puppeteer to be ready
 	await waitForPuppeteerReady();
 
-	// Create a new isolated browser instance for this render
-	const { browser, page, id: browserId } = await createIsolatedBrowser();
+	// Create a new isolated browser instance for this render with render options
+	const { browser, page, id: browserId } = await createIsolatedBrowser({
+		isometric: options.isometric,
+		background: options.background,
+	});
 	const startTime = Date.now();
 
 	trackRenderStart(browserId, 'image', schematicData.length);
@@ -90,6 +93,60 @@ export async function renderSchematic(
 		logger.info(`[${browserId}] Waiting for canvas to stabilize...`);
 		await new Promise(resolve => setTimeout(resolve, 1000));
 
+		// Apply additional render options (background, framing, etc.)
+		// Note: Camera preset is already set during renderer initialization
+		logger.info(`[${browserId}] Applying render options...`);
+		await page.evaluate(async (opts) => {
+			const renderer = (window as any).rendererRef?.current;
+			if (!renderer) {
+				console.warn("Renderer not available");
+				return;
+			}
+
+			// Apply background color
+			if (opts.background) {
+				console.log(`🎨 Setting background color to: ${opts.background}`);
+				if (opts.background.toLowerCase() === 'transparent') {
+					// For transparent, we need to set the renderer's clear color alpha to 0
+					const renderManager = renderer.renderManager;
+					if (renderManager?.renderer) {
+						renderManager.renderer.setClearColor(0x000000, 0);
+					}
+				} else {
+					// Set solid background color
+					renderer.sceneManager?.setBackgroundColor(opts.background);
+				}
+			}
+
+			// Apply framing (affects camera distance)
+			if (opts.framing) {
+				const paddingMap: Record<string, number> = {
+					tight: 0.05,
+					medium: 0.15,
+					wide: 0.3
+				};
+				const padding = paddingMap[opts.framing] || 0.15;
+				console.log(`📏 Setting framing to: ${opts.framing} (padding: ${padding})`);
+				try {
+					await renderer.cameraManager?.focusOnSchematics({
+						animationDuration: 0,
+						padding
+					});
+				} catch (err) {
+					console.warn("Could not adjust framing:", err);
+				}
+			}
+
+			// Force a few renders to ensure everything is applied
+			for (let i = 0; i < 3; i++) {
+				renderer.renderManager?.render();
+				await new Promise(resolve => requestAnimationFrame(resolve));
+			}
+
+			console.log(`✅ All render options applied`);
+
+		}, options);
+
 		// Take screenshot with detailed logging
 		logger.info(`[${browserId}] Taking screenshot...`);
 		const screenshotBlob = await page.evaluate(async (opts) => {
@@ -143,8 +200,11 @@ export async function renderSchematicVideo(
 ): Promise<Buffer> {
 	await waitForPuppeteerReady();
 
-	// Create a new isolated browser instance for this render
-	const { browser, page, id: browserId } = await createIsolatedBrowser();
+	// Create a new isolated browser instance for this render with render options
+	const { browser, page, id: browserId } = await createIsolatedBrowser({
+		isometric: options.isometric,
+		background: options.background,
+	});
 	const startTime = Date.now();
 
 	trackRenderStart(browserId, 'video', schematicData.length);
@@ -186,6 +246,72 @@ export async function renderSchematicVideo(
 
 		// Add extra delay to ensure canvas is fully updated
 		await new Promise(resolve => setTimeout(resolve, 1000));
+
+		// Apply additional render options (background, framing, etc.)
+		// Note: Camera preset is already set during renderer initialization
+		logger.info(`[${browserId}] Applying render options for video...`);
+		await page.evaluate(async (opts) => {
+			const renderer = (window as any).rendererRef?.current;
+			if (!renderer) {
+				console.warn("Renderer not available");
+				return;
+			}
+
+			// Apply background color
+			if (opts.background) {
+				console.log(`🎨 Setting background color to: ${opts.background}`);
+				if (opts.background.toLowerCase() === 'transparent') {
+					// For transparent, we need to set the renderer's clear color alpha to 0
+					const renderManager = renderer.renderManager;
+					if (renderManager?.renderer) {
+						renderManager.renderer.setClearColor(0x000000, 0);
+					}
+				} else {
+					// Set solid background color
+					renderer.sceneManager?.setBackgroundColor(opts.background);
+				}
+			}
+
+			// Apply framing (affects camera distance)
+			if (opts.framing) {
+				const paddingMap: Record<string, number> = {
+					tight: 0.05,
+					medium: 0.15,
+					wide: 0.3
+				};
+				const padding = paddingMap[opts.framing] || 0.15;
+				console.log(`📏 Setting framing to: ${opts.framing} (padding: ${padding})`);
+				try {
+					await renderer.cameraManager?.focusOnSchematics({
+						animationDuration: 0,
+						padding
+					});
+				} catch (err) {
+					console.warn("Could not adjust framing:", err);
+				}
+			}
+
+			// Set camera path if specified
+			if (opts.cameraPath) {
+				console.log(`🎬 Setting camera path to: ${opts.cameraPath}`);
+				try {
+					// Different camera paths for video animation
+					// Note: This would need to be implemented in the frontend video recording logic
+					// For now, we'll just log it as the current implementation uses circular orbit
+				} catch (err) {
+					console.warn("Could not set camera path:", err);
+				}
+			}
+
+			// Force a few renders to ensure everything is applied
+			for (let i = 0; i < 3; i++) {
+				renderer.renderManager?.render();
+				await new Promise(resolve => requestAnimationFrame(resolve));
+			}
+
+			console.log(`✅ All render options applied for video`);
+
+		}, options);
 
 		// Record video
 		const videoBlob = await page.evaluate(async (opts) => {

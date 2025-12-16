@@ -57,7 +57,7 @@ export async function initPuppeteerService(): Promise<void> {
 			console.error("Error message:", error.message);
 			console.error("Error stack:", error.stack);
 			console.error("Full error:", error);
-			
+
 			logger.error("Failed to initialize Puppeteer:", error.message || error);
 			isInitialized = false;
 			throw error;
@@ -67,14 +67,19 @@ export async function initPuppeteerService(): Promise<void> {
 	return initializationPromise;
 }
 
+export interface BrowserRenderOptions {
+	isometric?: boolean;
+	background?: string;
+}
+
 /**
  * Create a new isolated browser instance with initialized page
  */
-export async function createIsolatedBrowser(): Promise<{ browser: Browser; page: Page; id: string }> {
+export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions): Promise<{ browser: Browser; page: Page; id: string }> {
 	const browserId = `browser-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-	
+
 	logger.info(`[${browserId}] Creating new isolated browser instance...`);
-	
+
 	const browser = await puppeteer.launch({
 		// @ts-ignore
 		headless: "new",
@@ -108,9 +113,19 @@ export async function createIsolatedBrowser(): Promise<{ browser: Browser; page:
 	await page.setViewport({ width: 1920, height: 1080 });
 
 	try {
-		logger.info(`[${browserId}] Loading React app: ${FRONTEND_URL}`);
+		// Build URL with render options as query parameters
+		const url = new URL(FRONTEND_URL);
+		if (renderOptions?.isometric !== undefined) {
+			url.searchParams.set('isometric', renderOptions.isometric.toString());
+		}
+		if (renderOptions?.background) {
+			url.searchParams.set('background', renderOptions.background);
+		}
 
-		await page.goto(FRONTEND_URL, {
+		const finalUrl = url.toString();
+		logger.info(`[${browserId}] Loading React app: ${finalUrl}`);
+
+		await page.goto(finalUrl, {
 			waitUntil: "domcontentloaded",
 			timeout: 30000,
 		});
@@ -123,7 +138,7 @@ export async function createIsolatedBrowser(): Promise<{ browser: Browser; page:
 				return (
 					window.schematicHelpers &&
 					typeof window.schematicHelpers.waitForReady === "function" &&
-					typeof window.schematicHelpers.startVideoRecording === "function" && 
+					typeof window.schematicHelpers.startVideoRecording === "function" &&
 					typeof window.schematicHelpers.takeScreenshot === "function" &&
 					typeof window.schematicHelpers.loadSchematic === "function"
 				);

@@ -38,24 +38,14 @@ setupRoutes(app);
 if (IS_DEV) {
 	logger.info(`🔥 Development mode: Proxying to Vite dev server on port ${VITE_PORT}`);
 
-	// Proxy to Vite for all non-API routes
-	app.use((req, res, next) => {
-		// Skip API and health routes
-		if (req.path.startsWith("/api") || req.path.startsWith("/health")) {
-			return next();
-		}
-
-		// Create proxy with error handling
-		const proxy = createProxyMiddleware({
-			target: `http://localhost:${VITE_PORT}`,
-			changeOrigin: true,
-			ws: true, // Enable WebSocket proxying for HMR
-		});
-
-		// Handle proxy with custom error handling
-		proxy(req, res, (err) => {
-			if (err) {
-				logger.warn(`⚠️  Vite proxy error (is dev server running?): ${err}`);
+	// Create proxy ONCE (not per request) to prevent memory leaks
+	const viteProxy = createProxyMiddleware({
+		target: `http://localhost:${VITE_PORT}`,
+		changeOrigin: true,
+		ws: true, // Enable WebSocket proxying for HMR
+		on: {
+			error: (err: Error, req: any, res: any) => {
+				logger.warn(`⚠️  Vite proxy error (is dev server running?): ${err.message}`);
 				if (!res.headersSent) {
 					res.writeHead(503, { 'Content-Type': 'text/html' });
 					res.end(`
@@ -69,8 +59,19 @@ if (IS_DEV) {
 						</html>
 					`);
 				}
-			}
-		});
+			},
+		},
+	});
+
+	// Use the proxy for all non-API routes
+	app.use((req, res, next) => {
+		// Skip API and health routes
+		if (req.path.startsWith("/api") || req.path.startsWith("/health")) {
+			return next();
+		}
+
+		// Use the shared proxy instance
+		viteProxy(req, res, next);
 	});
 } else {
 	// Production: Serve built frontend
@@ -97,6 +98,11 @@ async function startServer() {
 			logger.info(`🔧 API: http://localhost:${PORT}/api`);
 			logger.info(`❤️  Health: http://localhost:${PORT}/health`);
 		});
+
+		// Increase max listeners for WebSocket handling in dev mode
+		if (IS_DEV) {
+			server.setMaxListeners(20);
+		}
 
 		// Wait a moment for server to be ready
 		await new Promise((resolve) => setTimeout(resolve, 1000));

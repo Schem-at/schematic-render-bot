@@ -10,7 +10,9 @@ import {
 import { logger } from "../shared/logger.js";
 import { processRender } from "../services/render-service.js";
 import { handleInteraction } from "./interaction-handlers.js";
-import { createQuickActionsRow, getUserOptions } from "./render-options.js";
+import { createQuickActionsRow, getUserOptions, setLastSchematic } from "./render-options.js";
+import { registerSlashCommands } from "./register-commands.js";
+import { handleSlashCommand } from "./slash-commands.js";
 import { spawn, ChildProcess } from "child_process";
 import { join } from "path";
 
@@ -62,14 +64,17 @@ export async function initDiscordBot(): Promise<void> {
 			],
 		});
 
-	client.once("clientReady", () => {
-		logger.info(`✅ Discord bot logged in as ${client?.user?.tag}`);
+		client.once("clientReady", async () => {
+			logger.info(`✅ Discord bot logged in as ${client?.user?.tag}`);
 
-		// Set bot activity
-		client?.user?.setActivity("Minecraft schematics | !help", {
-			type: "WATCHING" as any,
+			// Set bot activity
+			client?.user?.setActivity("Minecraft schematics | /help", {
+				type: "WATCHING" as any,
+			});
+
+			// Register slash commands
+			await registerSlashCommands();
 		});
-	});
 
 		client.on("error", (error) => {
 			logger.error("Discord bot error:", error);
@@ -81,8 +86,7 @@ export async function initDiscordBot(): Promise<void> {
 
 			try {
 				console.log(
-					`📨 Message received from ${
-						message.author.username
+					`📨 Message received from ${message.author.username
 					}: "${message.content.substring(0, 100)}..."`
 				);
 
@@ -108,14 +112,20 @@ export async function initDiscordBot(): Promise<void> {
 			}
 		});
 
-	// Handle all interactions (buttons, select menus, modals)
-	client.on("interactionCreate", async (interaction) => {
-		try {
-			await handleInteraction(interaction);
-		} catch (error) {
-			logger.error("Error handling interaction:", error);
-		}
-	});
+		// Handle all interactions (buttons, select menus, modals, slash commands)
+		client.on("interactionCreate", async (interaction) => {
+			try {
+				// Handle slash commands
+				if (interaction.isChatInputCommand()) {
+					await handleSlashCommand(interaction);
+				} else {
+					// Handle other interactions (buttons, select menus, modals)
+					await handleInteraction(interaction);
+				}
+			} catch (error) {
+				logger.error("Error handling interaction:", error);
+			}
+		});
 
 		await client.login(token);
 	} catch (error) {
@@ -195,9 +205,8 @@ async function handleScriptCommand(message: any) {
 			.addFields(
 				{
 					name: "Limit",
-					value: `${RATE_LIMIT_MAX} executions per ${
-						RATE_LIMIT_WINDOW / 60000
-					} minutes`,
+					value: `${RATE_LIMIT_MAX} executions per ${RATE_LIMIT_WINDOW / 60000
+						} minutes`,
 					inline: true,
 				},
 				{ name: "Reset Time", value: `${resetTime} minutes`, inline: true }
@@ -704,9 +713,8 @@ async function handleHelpCommand(message: any) {
 				name: "⚠️ Limits",
 				value: `• Max file size: ${Math.round(
 					MAX_FILE_SIZE / 1024 / 1024
-				)}MB\n• Rate limit: ${RATE_LIMIT_MAX} operations per ${
-					RATE_LIMIT_WINDOW / 60000
-				} minutes\n• Script timeout: 8 seconds`,
+				)}MB\n• Rate limit: ${RATE_LIMIT_MAX} operations per ${RATE_LIMIT_WINDOW / 60000
+					} minutes\n• Script timeout: 8 seconds`,
 				inline: false,
 			}
 		)
@@ -781,9 +789,8 @@ async function handleStatusCommand(message: any) {
 			}
 		)
 		.setFooter({
-			text: `Rate limit: ${RATE_LIMIT_MAX} operations per ${
-				RATE_LIMIT_WINDOW / 60000
-			} minutes`,
+			text: `Rate limit: ${RATE_LIMIT_MAX} operations per ${RATE_LIMIT_WINDOW / 60000
+				} minutes`,
 		})
 		.setTimestamp();
 
@@ -900,9 +907,8 @@ async function handleSchematicAttachments(
 			.addFields(
 				{
 					name: "Limit",
-					value: `${RATE_LIMIT_MAX} renders per ${
-						RATE_LIMIT_WINDOW / 60000
-					} minutes`,
+					value: `${RATE_LIMIT_MAX} renders per ${RATE_LIMIT_WINDOW / 60000
+						} minutes`,
 					inline: true,
 				},
 				{ name: "Reset Time", value: `${resetTime} minutes`, inline: true }
@@ -953,13 +959,31 @@ async function renderSchematicImageAttachment(message: any, attachment: any) {
 
 		const schematicBuffer = Buffer.from(await response.arrayBuffer());
 
-		// Set up render options
+		// Cache the schematic for quick re-renders
+		setLastSchematic(message.author.id, {
+			buffer: schematicBuffer,
+			filename: attachment.name,
+			timestamp: Date.now(),
+			channelId: message.channel.id,
+			messageId: message.id,
+		});
+
+		// Get user's render options
+		const userOptions = getUserOptions(message.author.id);
+
+		// Set up render options with user preferences
 		const renderOptions = {
-			width: 1920,
-			height: 1080,
+			width: userOptions.width,
+			height: userOptions.height,
 			format: "image/png" as const,
 			quality: 0.95,
+			isometric: userOptions.isometric,
+			background: userOptions.background,
+			framing: userOptions.framing,
+			cameraPath: userOptions.cameraPath,
 		};
+
+		logger.info(`Rendering with user options: ${JSON.stringify(userOptions)}`);
 
 		// Render the schematic with full tracking
 		const result = await processRender({
@@ -1079,13 +1103,31 @@ async function renderSchematicVideoAttachment(message: any, attachment: any) {
 
 		const schematicBuffer = Buffer.from(await response.arrayBuffer());
 
-		// Set up video render options
+		// Cache the schematic for quick re-renders
+		setLastSchematic(message.author.id, {
+			buffer: schematicBuffer,
+			filename: attachment.name,
+			timestamp: Date.now(),
+			channelId: message.channel.id,
+			messageId: message.id,
+		});
+
+		// Get user's render options
+		const userOptions = getUserOptions(message.author.id);
+
+		// Set up video render options with user preferences
 		const videoOptions = {
-			duration: 5, // 5 second video
-			width: 1280, // 1280px width
-			height: 720, // 720px height
-			frameRate: 30, // 30fps for smooth rotation
+			duration: userOptions.duration || 6,
+			width: userOptions.width,
+			height: userOptions.height,
+			frameRate: userOptions.frameRate || 30,
+			isometric: userOptions.isometric,
+			background: userOptions.background,
+			framing: userOptions.framing,
+			cameraPath: userOptions.cameraPath,
 		};
+
+		logger.info(`Rendering video with user options: ${JSON.stringify(userOptions)}`);
 
 		// Render the video with full tracking
 		const result = await processRender({

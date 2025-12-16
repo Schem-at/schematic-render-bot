@@ -20,9 +20,17 @@ export interface RenderOptionsState {
   frameRate?: number;
 }
 
+export interface LastSchematic {
+  buffer: Buffer;
+  filename: string;
+  timestamp: number;
+  channelId: string;
+  messageId: string;
+}
+
 export const DEFAULT_OPTIONS: RenderOptionsState = {
   isometric: false,
-  background: '#2c3e50',
+  background: 'transparent',  // Transparent by default
   framing: 'medium',
   cameraPath: 'circular',
   width: 1920,
@@ -34,6 +42,10 @@ export const DEFAULT_OPTIONS: RenderOptionsState = {
 // Store user options temporarily (in production, use Redis or DB)
 const userOptions = new Map<string, RenderOptionsState>();
 
+// Store last schematic for quick re-renders (30 min expiry)
+const lastSchematics = new Map<string, LastSchematic>();
+const SCHEMATIC_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
 export function getUserOptions(userId: string): RenderOptionsState {
   return userOptions.get(userId) || { ...DEFAULT_OPTIONS };
 }
@@ -43,12 +55,40 @@ export function setUserOptions(userId: string, options: Partial<RenderOptionsSta
   userOptions.set(userId, { ...current, ...options });
 }
 
+export function getLastSchematic(userId: string): LastSchematic | null {
+  const cached = lastSchematics.get(userId);
+  if (!cached) return null;
+
+  // Check if expired
+  const age = Date.now() - cached.timestamp;
+  if (age > SCHEMATIC_CACHE_TTL) {
+    lastSchematics.delete(userId);
+    return null;
+  }
+
+  return cached;
+}
+
+export function setLastSchematic(userId: string, schematic: LastSchematic) {
+  lastSchematics.set(userId, schematic);
+
+  // Clean up old entries periodically
+  if (lastSchematics.size > 100) {
+    const now = Date.now();
+    for (const [key, value] of lastSchematics.entries()) {
+      if (now - value.timestamp > SCHEMATIC_CACHE_TTL) {
+        lastSchematics.delete(key);
+      }
+    }
+  }
+}
+
 /**
  * Create render options menu
  */
 export function createRenderOptionsMenu(userId: string) {
   const options = getUserOptions(userId);
-  
+
   // View type selector
   const viewRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder()
@@ -71,7 +111,7 @@ export function createRenderOptionsMenu(userId: string) {
         },
       ])
   );
-  
+
   // Camera path selector (for videos)
   const cameraRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder()
@@ -108,7 +148,7 @@ export function createRenderOptionsMenu(userId: string) {
         },
       ])
   );
-  
+
   // Framing selector
   const framingRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder()
@@ -138,7 +178,7 @@ export function createRenderOptionsMenu(userId: string) {
         },
       ])
   );
-  
+
   // Action buttons
   const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -162,7 +202,7 @@ export function createRenderOptionsMenu(userId: string) {
       .setEmoji('👁️')
       .setStyle(ButtonStyle.Primary)
   );
-  
+
   return { viewRow, cameraRow, framingRow, buttonRow };
 }
 
@@ -171,7 +211,7 @@ export function createRenderOptionsMenu(userId: string) {
  */
 export function createOptionsEmbed(userId: string) {
   const options = getUserOptions(userId);
-  
+
   return new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('🎨 Render Options')
@@ -223,11 +263,11 @@ export function createBackgroundModal() {
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId('background_color')
-          .setLabel('Background Color (hex)')
+          .setLabel('Background Color')
           .setStyle(TextInputStyle.Short)
-          .setPlaceholder('#2c3e50')
+          .setPlaceholder('#2c3e50 or transparent')
           .setRequired(true)
-          .setMaxLength(7)
+          .setMaxLength(20)
       )
     );
 }
@@ -237,7 +277,7 @@ export function createBackgroundModal() {
  */
 export function createAdvancedOptionsModal(userId: string) {
   const options = getUserOptions(userId);
-  
+
   return new ModalBuilder()
     .setCustomId('modal_advanced')
     .setTitle('Advanced Render Options')
@@ -308,6 +348,8 @@ export function createQuickActionsRow() {
 export default {
   getUserOptions,
   setUserOptions,
+  getLastSchematic,
+  setLastSchematic,
   createRenderOptionsMenu,
   createOptionsEmbed,
   createBackgroundModal,
