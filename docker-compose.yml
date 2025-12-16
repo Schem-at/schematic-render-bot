@@ -11,12 +11,18 @@ services:
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-production}
       - PORT=${PORT:-3000}
       - DISCORD_TOKEN=${DISCORD_TOKEN:-}
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID:-}
       - MAX_CONCURRENT_RENDERS=${MAX_CONCURRENT_RENDERS:-3}
+      - PUPPETEER_HEADLESS=${PUPPETEER_HEADLESS:-true}
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
       - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+      - FRONTEND_URL=${FRONTEND_URL:-}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-100MB}
+      - UPLOAD_DIR=${UPLOAD_DIR:-./uploads}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs

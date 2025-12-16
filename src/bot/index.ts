@@ -6,10 +6,19 @@ import {
 	ChatInputCommandInteraction,
 	MessageFlags,
 	UserContextMenuCommandInteraction,
-	MessageContextMenuCommandInteraction
+	MessageContextMenuCommandInteraction,
+	ButtonInteraction
 } from "discord.js";
 import { logger } from "../shared/logger.js";
 import { commands, menus, registerCommands, syncCommands } from "./command.js";
+import {
+	render,
+	getAttachmentFromCache,
+	createRenderActionButtons,
+	storeAttachmentUrl,
+	RenderCustomOptions
+} from "./utils/render.js";
+import { TimeoutError } from "puppeteer";
 
 let client: Client | null = null;
 
@@ -66,9 +75,15 @@ export async function initDiscordBot(): Promise<void> {
 			// Handle button interactions
 			if (interaction.isButton()) {
 				try {
-					// TODO: Buttons
+					await handleButtonInteraction(interaction);
 				} catch (error) {
 					logger.error("Error handling button interaction:", error);
+					if (!interaction.replied && !interaction.deferred) {
+						await interaction.reply({
+							content: "❌ An error occurred while processing your request.",
+							flags: MessageFlags.Ephemeral
+						});
+					}
 				}
 			}
 		});
@@ -117,6 +132,113 @@ async function handleMenu(interaction: UserContextMenuCommandInteraction | Messa
 		}
 	} catch (error) {
 		logger.error("Error handling context menu:", error);
+	}
+}
+
+async function handleButtonInteraction(interaction: ButtonInteraction) {
+	const customId = interaction.customId;
+
+	// Parse button action and URL hash
+	const parts = customId.split('_');
+	if (parts.length < 3 || parts[0] !== 'render') {
+		logger.warn(`Unknown button customId: ${customId}`);
+		return;
+	}
+
+	const action = parts[1];
+	const urlHash = parts.slice(2).join('_');
+
+	// Retrieve attachment from cache
+	const cached = getAttachmentFromCache(urlHash);
+	if (!cached) {
+		await interaction.reply({
+			content: "❌ This render has expired. Please upload the schematic again.",
+			flags: MessageFlags.Ephemeral
+		});
+		return;
+	}
+
+	// Determine render options based on button action
+	const options: RenderCustomOptions = {};
+	let isVideo = false;
+	let description = "";
+
+	switch (action) {
+		case 'iso':
+			options.isometric = true;
+			description = "🏛️ Isometric view";
+			break;
+		case 'persp':
+			options.isometric = false;
+			description = "📐 Perspective view";
+			break;
+		case 'video':
+			isVideo = true;
+			description = "🎬 360° video";
+			break;
+		case 'bg':
+			const bgType = parts[2];
+			if (bgType === 'transparent') {
+				options.background = 'transparent';
+				description = "☁️ Transparent background";
+			} else if (bgType === 'dark') {
+				options.background = '#1a1a1a';
+				description = "🌑 Dark background";
+			} else if (bgType === 'light') {
+				options.background = '#f0f0f0';
+				description = "☀️ Light background";
+			}
+			break;
+		case 'hd':
+			options.width = 3840;
+			options.height = 2160;
+			description = "✨ 4K render";
+			break;
+		default:
+			await interaction.reply({
+				content: "❌ Unknown render action.",
+				flags: MessageFlags.Ephemeral
+			});
+			return;
+	}
+
+	// Acknowledge the interaction
+	await interaction.deferReply();
+
+	try {
+		// Create a mock attachment object
+		const mockAttachment = {
+			url: cached.url,
+			name: cached.name,
+			size: 0, // Not needed for render
+		} as any;
+
+		// Render with new options
+		const result = await render(mockAttachment, isVideo, options);
+
+		// Update buttons to reflect current state
+		const buttons = createRenderActionButtons(cached.url, options);
+
+		await interaction.editReply({
+			content: `✅ Re-rendered **${cached.name}** with ${description}`,
+			files: [result],
+			components: buttons
+		});
+
+		logger.info(`Button render completed: ${description} for ${cached.name}`);
+
+	} catch (error) {
+		logger.error(`Button render failed:`, error);
+
+		if (error instanceof TimeoutError) {
+			await interaction.editReply({
+				content: "⌛ Render took too long. Try with lower quality settings or a smaller schematic."
+			});
+		} else {
+			await interaction.editReply({
+				content: `❌ Failed to render: ${error instanceof Error ? error.message : 'Unknown error'}`
+			});
+		}
 	}
 }
 

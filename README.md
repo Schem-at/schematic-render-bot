@@ -20,7 +20,8 @@ bun run setup-libs
 # Configure environment
 # Create a .env file with the following variables:
 # DISCORD_TOKEN=your_discord_bot_token
-# DISCORD_CLIENT_ID=your_discord_application_id
+# DISCORD_CLIENT_ID=your_discord_application_id (required for slash commands!)
+# See DEPLOYMENT.md for full environment variable list
 
 # Add schematic renderer library
 # Place schematic-renderer.tar.gz in libs/ directory

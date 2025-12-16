@@ -1,12 +1,12 @@
 import { ApplicationCommandType, ContextMenuCommandBuilder, MessageContextMenuCommandInteraction, MessageFlags } from "discord.js";
 import { IMenuCommand } from "../command";
-import { checkError, render, createRenderActionButtons, storeAttachmentUrl } from "../utils/render";
+import { checkError, render, storeAttachmentUrl } from "../utils/render";
 import { TimeoutError } from "puppeteer";
 import { logger } from "../../shared/logger";
 
-export default class RenderImage implements IMenuCommand {
+export default class RenderComparison implements IMenuCommand {
 	info = new ContextMenuCommandBuilder()
-		.setName("Render image")
+		.setName("Compare views")
 		.setType(ApplicationCommandType.Message);
 
 	async handle(interaction: MessageContextMenuCommandInteraction) {
@@ -23,27 +23,29 @@ export default class RenderImage implements IMenuCommand {
 		await interaction.deferReply();
 
 		try {
-			const image = await render(attachment, false);
+			// Render both perspective and isometric views
+			logger.info(`Rendering comparison for ${attachment.name}`);
+
+			const [perspectiveImage, isometricImage] = await Promise.all([
+				render(attachment, false, { isometric: false }),
+				render(attachment, false, { isometric: true })
+			]);
 
 			// Store attachment for button interactions
 			const urlHash = Buffer.from(attachment.url).toString('base64').substring(0, 50);
 			storeAttachmentUrl(urlHash, attachment.url, attachment.name);
 
-			// Create action buttons
-			const buttons = createRenderActionButtons(attachment.url);
-
 			await interaction.editReply({
-				content: `✅ Rendered **${attachment.name}** • Try different views below:`,
-				files: [image],
-				components: buttons
+				content: `✅ **${attachment.name}** comparison\n📐 Perspective vs 🏛️ Isometric`,
+				files: [perspectiveImage, isometricImage]
 			});
 
 		} catch (error) {
 			if (error instanceof TimeoutError) {
-				await interaction.editReply({ content: "⌛ Render took too long. Aborted." });
+				await interaction.editReply({ content: "⌛ Comparison took too long. Try with a smaller schematic." });
 			} else {
-				logger.error(`Failed to render schematic "${attachment.name}":`, error);
-				await interaction.editReply({ content: `❌ An error occurred:` });
+				logger.error(`Failed to render comparison for "${attachment.name}":`, error);
+				await interaction.editReply({ content: `❌ An error occurred during comparison.` });
 			}
 		}
 	}
