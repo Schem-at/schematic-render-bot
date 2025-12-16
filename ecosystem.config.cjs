@@ -6,7 +6,7 @@ module.exports = {
     cwd: "/Users/m1/schemat-render",
     env: {
       NODE_ENV: "production",
-      PORT: 3000
+      PORT: process.env.PORT || 3000
     },
     instances: 1,
     autorestart: true,

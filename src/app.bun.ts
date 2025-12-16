@@ -16,8 +16,7 @@ import {
 // Import route handlers
 import { setupAdminRoutes } from "./api/routes/admin.bun.js";
 import { setupAnalyticsRoutes } from "./api/routes/analytics.bun.js";
-import { setupRenderRoutes } from "./api/routes/render.bun.js";
-// TODO: Convert synthase routes
+// TODO: Convert render and synthase routes
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,13 +28,19 @@ const IS_DEV = process.env.NODE_ENV !== "production";
 // Create router
 const router = new Router();
 
-// CORS middleware - add CORS headers to responses
-// (We'll add headers in the response, not block requests)
+// CORS middleware
+router.use(async (req) => {
+	const origin = req.headers.get("origin");
+	if (origin) {
+		// Allow CORS for all origins in dev, specific origins in prod
+		return null; // Continue to next handler
+	}
+	return null;
+});
 
 // Setup routes
 setupAdminRoutes(router);
 setupAnalyticsRoutes(router);
-setupRenderRoutes(router);
 
 // Health check
 router.get("/health", async (req) => {
@@ -81,51 +86,29 @@ async function startServer() {
 		// @ts-ignore - Bun global is available at runtime
 		const server = Bun.serve({
 			port: PORT,
-			fetch: async (req: Request, serverInstance: any) => {
+			fetch: async (req: Request) => {
 				const url = new URL(req.url);
-
-				// Handle CORS preflight
-				if (req.method === "OPTIONS") {
-					return new Response(null, {
-						status: 204,
-						headers: {
-							"Access-Control-Allow-Origin": "*",
-							"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-							"Access-Control-Allow-Headers": "Content-Type, Authorization",
-						},
-					});
-				}
 
 				// Handle WebSocket upgrade
 				if (url.pathname === "/ws/admin") {
 					const upgradeHeader = req.headers.get("upgrade");
-					const connectionHeader = req.headers.get("connection");
-					const secWebSocketKey = req.headers.get("sec-websocket-key");
-
-					logger.info(`[WebSocket] Upgrade request to ${url.pathname}`);
-					logger.info(`[WebSocket] Headers - upgrade: ${upgradeHeader}, connection: ${connectionHeader}, key: ${secWebSocketKey?.substring(0, 10)}...`);
-
-					// Bun's upgrade method - returns true if upgrade successful
-					// Bun automatically checks if it's a valid WebSocket upgrade request
-					try {
-						const upgraded = serverInstance.upgrade(req, {
+					if (upgradeHeader === "websocket") {
+						logger.info(`[WebSocket] Attempting upgrade for ${url.pathname}`);
+						const success = server.upgrade(req, {
 							data: {
 								createdAt: Date.now(),
 							},
 						});
 
-						if (upgraded) {
-							logger.info(`[WebSocket] Upgrade successful for ${url.pathname} - WebSocket handlers will be called`);
-							// Return nothing - Bun handles the WebSocket from here
-							return;
+						if (success) {
+							logger.info(`[WebSocket] Upgrade successful`);
+							return undefined as any;
 						}
 
-						logger.warn(`[WebSocket] Upgrade returned false for ${url.pathname}`);
-						return new Response("WebSocket upgrade failed", { status: 400 });
-					} catch (error: any) {
-						logger.error(`[WebSocket] Exception during upgrade:`, error);
-						return new Response(`WebSocket upgrade error: ${error.message}`, { status: 500 });
+						logger.error(`[WebSocket] Upgrade failed`);
+						return new Response("WebSocket upgrade failed", { status: 500 });
 					}
+					return new Response("WebSocket upgrade required", { status: 400 });
 				}
 
 				// In development, proxy non-API routes to Vite
@@ -152,11 +135,6 @@ async function startServer() {
 					return response;
 				}
 
-				// Synthase routes - TODO: Convert to Bun
-				if (url.pathname.startsWith("/api/synthase")) {
-					return json({ error: "Synthase routes not yet converted to Bun native. Please use Express version temporarily." }, 501);
-				}
-
 				// Production: Serve static files
 				if (!IS_DEV && !url.pathname.startsWith("/api")) {
 					try {
@@ -179,38 +157,16 @@ async function startServer() {
 			},
 			websocket: {
 				open: (ws: WebSocket) => {
-					logger.info(`[WebSocket] open() called, readyState: ${ws.readyState}`);
-					try {
-						handleWebSocketOpen(ws, server);
-					} catch (error) {
-						logger.error(`[WebSocket] Error in open handler:`, error);
-					}
+					handleWebSocketOpen(ws, server);
 				},
 				message: (ws: WebSocket, message: string | Buffer) => {
-					try {
-						handleWebSocketMessage(ws, message);
-					} catch (error) {
-						logger.error(`[WebSocket] Error in message handler:`, error);
-					}
+					handleWebSocketMessage(ws, message);
 				},
-				close: (ws: WebSocket, code?: number, reason?: string) => {
-					logger.info(`[WebSocket] close() called, code: ${code}, reason: ${reason}`);
-					try {
-						handleWebSocketClose(ws);
-					} catch (error) {
-						logger.error(`[WebSocket] Error in close handler:`, error);
-					}
+				close: (ws: WebSocket) => {
+					handleWebSocketClose(ws);
 				},
 				error: (ws: WebSocket, error: Error) => {
-					logger.error(`[WebSocket] error() called:`, error);
-					try {
-						handleWebSocketError(ws, error);
-					} catch (err) {
-						logger.error(`[WebSocket] Error in error handler:`, err);
-					}
-				},
-				drain: (ws: WebSocket) => {
-					logger.debug(`[WebSocket] drain() called`);
+					handleWebSocketError(ws, error);
 				},
 			},
 		});

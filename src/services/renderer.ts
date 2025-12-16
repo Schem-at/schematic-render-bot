@@ -145,6 +145,7 @@ export async function renderSchematic(
 
 			console.log(`✅ All render options applied`);
 
+
 		}, options);
 
 		// Take screenshot with detailed logging

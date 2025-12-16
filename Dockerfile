@@ -64,16 +64,21 @@ COPY --from=backend-builder --chown=node:node /app/dist-frontend ./dist-frontend
 COPY --from=backend-builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=backend-builder --chown=node:node /app/package.json ./
 
-# Copy the startup script
+# Copy the startup and healthcheck scripts
 COPY --chown=node:node start.sh ./start.sh
-RUN chmod +x start.sh
+COPY --chown=node:node healthcheck.sh ./healthcheck.sh
+RUN chmod +x start.sh healthcheck.sh
 
 RUN mkdir -p /app/uploads /app/logs && chown -R node:node /app
 
 USER node
+
+# Default port, but can be overridden via PORT environment variable
+ENV PORT=3000
 EXPOSE 3000
 
+# Healthcheck uses PORT environment variable via script
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
+    CMD ["./healthcheck.sh"]
 
 CMD ["./start.sh"]

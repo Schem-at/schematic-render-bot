@@ -250,8 +250,124 @@ export function AdminDashboard() {
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(fetchAllData, 2000);
-    return () => clearInterval(interval);
+
+    let ws: WebSocket | null = null;
+    let pingInterval: ReturnType<typeof setInterval> | null = null;
+    let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let isConnecting = false;
+
+    const connectWebSocket = () => {
+      // Prevent duplicate connections
+      if (isConnecting || (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN))) {
+        console.log('[WebSocket] Already connecting or connected, skipping');
+        return;
+      }
+
+      isConnecting = true;
+      // Use WebSocket instead of polling
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/admin`;
+      console.log(`[WebSocket] Connecting to ${wsUrl}`);
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('[WebSocket] Connected to admin dashboard');
+        isConnecting = false;
+        setError(null);
+        // Clear any fallback polling
+        if (fallbackInterval) {
+          clearInterval(fallbackInterval);
+          fallbackInterval = null;
+        }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'update' && message.data) {
+            // Update all state from WebSocket message
+            if (message.data.metrics) {
+              setMetrics(message.data.metrics);
+            }
+            if (message.data.activeRenders) {
+              setActiveRenders(message.data.activeRenders.activeRenders || []);
+            }
+            if (message.data.renderHistory) {
+              setRenderHistory(message.data.renderHistory.renders || []);
+            }
+            if (message.data.analytics) {
+              setAnalytics(message.data.analytics);
+            }
+            if (message.data.puppeteerMetrics) {
+              setPuppeteerMetrics(message.data.puppeteerMetrics);
+            }
+            setLoading(false);
+            setError(null);
+          } else if (message.type === 'pong') {
+            // Heartbeat response
+          }
+        } catch (err: any) {
+          console.error('[WebSocket] Error parsing message:', err);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('[WebSocket] Error:', error);
+        isConnecting = false;
+        // Don't set error state immediately - wait for onclose
+      };
+
+      ws.onclose = (event) => {
+        console.log(`[WebSocket] Disconnected (code: ${event.code}, reason: ${event.reason || 'none'})`);
+        isConnecting = false;
+
+        // Clean up ping interval
+        if (pingInterval) {
+          clearInterval(pingInterval);
+          pingInterval = null;
+        }
+
+        // If it was an unexpected close and auto-refresh is still enabled, try to reconnect
+        if (autoRefresh && event.code !== 1000 && event.code !== 1001) {
+          setError('WebSocket disconnected. Falling back to polling.');
+          // Fallback to polling
+          if (!fallbackInterval) {
+            fallbackInterval = setInterval(fetchAllData, 2000);
+          }
+
+          // Try to reconnect after 5 seconds
+          reconnectTimeout = setTimeout(() => {
+            if (autoRefresh && !isConnecting) {
+              console.log('[WebSocket] Attempting to reconnect...');
+              connectWebSocket();
+            }
+          }, 5000);
+        }
+      };
+
+      // Send ping every 30 seconds to keep connection alive
+      pingInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
+    };
+
+    // Initial connection
+    connectWebSocket();
+
+    return () => {
+      // Cleanup
+      if (pingInterval) clearInterval(pingInterval);
+      if (fallbackInterval) clearInterval(fallbackInterval);
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (ws) {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close(1000, 'Component unmounting');
+        }
+      }
+    };
   }, [autoRefresh]);
 
   const formatDuration = (ms?: number) => {

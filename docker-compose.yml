@@ -9,10 +9,10 @@ services:
     container_name: schemat-render
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - NODE_ENV=production
-      - PORT=3000
+      - PORT=${PORT:-3000}
       - DISCORD_TOKEN=${DISCORD_TOKEN:-}
       - MAX_CONCURRENT_RENDERS=${MAX_CONCURRENT_RENDERS:-3}
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -21,7 +21,7 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:$${PORT:-3000}/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

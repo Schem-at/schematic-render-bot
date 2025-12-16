@@ -5,9 +5,10 @@ services:
       context: .
       target: runtime
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - NODE_ENV=development
+      - PORT=${PORT:-3000}
       - DISCORD_TOKEN=${DISCORD_TOKEN}
     volumes:
       - ./uploads:/app/uploads
