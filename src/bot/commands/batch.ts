@@ -145,6 +145,20 @@ export default class Batch implements ICommand {
 				return;
 			}
 
+			// Create batch job record early (before processing) so we can save source zip
+			const batchId = `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+			const batchStartTime = Date.now();
+
+			// Save source zip file
+			const sourceZipPath = join(BATCH_STORAGE_DIR, `${batchId}-source.zip`);
+			try {
+				await writeFile(sourceZipPath, zipBuffer);
+				logger.info(`[${batchId}] Saved source zip file: ${sourceZipPath}`);
+			} catch (saveErr: any) {
+				logger.error(`[${batchId}] Failed to save source zip file:`, saveErr);
+				// Continue anyway - source zip saving is not critical
+			}
+
 			// Extract with security checks
 			await this.updateProgress(interaction, '📦 Extracting and validating zip contents...');
 
@@ -177,10 +191,6 @@ export default class Batch implements ICommand {
 			// Create initial progress embed
 			const totalCount = extraction.schematics.length;
 			this.batchStartTime = Date.now();
-
-			// Create batch job record
-			const batchId = `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-			const batchStartTime = Date.now();
 
 			// Render options
 			const renderOptions = {
@@ -417,105 +427,91 @@ export default class Batch implements ICommand {
 			const resultZip = await createResultZip(successfulResults);
 			const zipFilename = `${attachment.name.replace('.zip', '')}_renders.zip`;
 
-			// Check if result is too large for Discord
-			if (resultZip.length > DISCORD_FILE_LIMIT) {
-				// Save to disk using batch job ID (permanent reference)
-				const zipPath = join(BATCH_STORAGE_DIR, `${batchId}.zip`);
+			// Always save result zip to disk and create download URL
+			const resultZipPath = join(BATCH_STORAGE_DIR, `${batchId}-result.zip`);
+			const isLarge = resultZip.length > DISCORD_FILE_LIMIT;
 
-				try {
-					await writeFile(zipPath, resultZip);
+			let resultDownloadUrl: string | null = null;
+			let sourceDownloadUrl: string | null = null;
 
-					// Also store in memory cache for 24h TTL (for backward compatibility)
-					const downloadBatchId = randomUUID();
-					batchFiles.set(downloadBatchId, {
-						path: zipPath,
-						createdAt: Date.now(),
-						userId: interaction.user.id,
-						filename: zipFilename,
-					});
-
-					// Get base URL from environment or construct it
-					const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'https://schemat.io';
-					// Use batch job ID for permanent access, downloadBatchId for 24h TTL
-					const downloadUrl = `${baseUrl}/api/batch-download/${batchId}`;
-
-					// Update batch job
-					statements.updateBatchJobComplete.run(
-						Date.now(),
-						batchDuration,
-						succeeded,
-						failed,
-						cached,
-						zipPath,
-						resultZip.length,
-						downloadUrl,
-						batchId
-					);
-
-					const completionEmbed = this.createCompletionEmbed(results, { view, background, framing, width, height }, cached);
-					completionEmbed.addFields({
-						name: '📥 Download Link',
-						value: `[Click here to download](${downloadUrl})\n\n⚠️ **File is ${(resultZip.length / 1024 / 1024).toFixed(1)}MB** (Discord limit: 25MB)\n⏰ Link expires in 24 hours`,
-						inline: false,
-					});
-
-					await interaction.editReply({
-						content: '',
-						embeds: [completionEmbed],
-					});
-
-					logger.info(`Saved large batch file: ${downloadBatchId} (${(resultZip.length / 1024 / 1024).toFixed(1)}MB) for user ${interaction.user.tag}`);
-				} catch (saveErr: any) {
-					logger.error('Failed to save batch file:', saveErr);
-					statements.updateBatchJobError.run(
-						Date.now(),
-						batchDuration,
-						`Failed to save result: ${saveErr.message}`,
-						batchId
-					);
-					await interaction.editReply({
-						content: `⚠️ **Result zip is too large for Discord (${(resultZip.length / 1024 / 1024).toFixed(1)}MB) and failed to save for download.**\n\nTry reducing the resolution or processing fewer schematics at once.`,
-						embeds: [this.createCompletionEmbed(results, { view, background, framing, width, height }, cached)],
-					});
-				}
-
-				await cleanupExtraction(extractDir);
-				return;
-			}
-
-			// Update batch job
 			try {
+				// Save result zip
+				await writeFile(resultZipPath, resultZip);
+
+				// Store relative URLs - frontend will construct full URL using window.location.origin
+				resultDownloadUrl = `/api/batch-download/${batchId}-result`;
+				sourceDownloadUrl = `/api/batch-download/${batchId}-source`;
+
+				// Update batch job with both source and result file info
 				statements.updateBatchJobComplete.run(
 					Date.now(),
 					batchDuration,
 					succeeded,
 					failed,
 					cached,
-					null, // No file path for Discord uploads
+					resultZipPath,
 					resultZip.length,
-					null, // No download URL for Discord uploads
+					resultDownloadUrl,
+					sourceZipPath,
+					sourceDownloadUrl,
 					batchId
 				);
 				logger.info(`[${batchId}] Updated batch job to completed: ${succeeded}/${totalCount} succeeded, ${cached} cached`);
-			} catch (dbErr: any) {
-				logger.error(`[${batchId}] Failed to update batch job:`, dbErr);
+
+				// Create completion embed
+				const completionEmbed = this.createCompletionEmbed(results, { view, background, framing, width, height }, cached);
+
+				// For Discord embeds, construct full URLs (Discord needs absolute URLs)
+				// Frontend will use relative URLs from database and construct full URLs using window.location.origin
+				const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'https://schemat.io';
+				const fullResultUrl = `${baseUrl}${resultDownloadUrl}`;
+				const fullSourceUrl = `${baseUrl}${sourceDownloadUrl}`;
+
+				// Add download links
+				if (isLarge) {
+					completionEmbed.addFields({
+						name: '📥 Download Links',
+						value: `**Result:** [Download rendered images](${fullResultUrl}) (${(resultZip.length / 1024 / 1024).toFixed(1)}MB)\n**Source:** [Download original zip](${fullSourceUrl}) (${(zipBuffer.length / 1024 / 1024).toFixed(1)}MB)\n\n⚠️ **Result file is ${(resultZip.length / 1024 / 1024).toFixed(1)}MB** (Discord limit: 25MB)`,
+						inline: false,
+					});
+				} else {
+					completionEmbed.addFields({
+						name: '📥 Download Links',
+						value: `**Result:** [Download rendered images](${fullResultUrl}) (${(resultZip.length / 1024 / 1024).toFixed(1)}MB)\n**Source:** [Download original zip](${fullSourceUrl}) (${(zipBuffer.length / 1024 / 1024).toFixed(1)}MB)`,
+						inline: false,
+					});
+				}
+
+				// Send result zip via Discord if small enough, otherwise just send embed with download link
+				if (isLarge) {
+					await interaction.editReply({
+						content: '',
+						embeds: [completionEmbed],
+					});
+				} else {
+					// Send zip file via Discord
+					const zipAttachment = new AttachmentBuilder(resultZip, { name: zipFilename });
+					await interaction.editReply({
+						content: '',
+						embeds: [completionEmbed],
+						files: [zipAttachment],
+					});
+				}
+
+				logger.info(`[${batchId}] Batch completed: ${succeeded}/${totalCount} succeeded, ${cached} cached. Result: ${(resultZip.length / 1024 / 1024).toFixed(1)}MB`);
+			} catch (saveErr: any) {
+				logger.error('Failed to save batch files:', saveErr);
+				statements.updateBatchJobError.run(
+					Date.now(),
+					batchDuration,
+					`Failed to save result: ${saveErr.message}`,
+					batchId
+				);
+				await interaction.editReply({
+					content: `⚠️ **Failed to save batch files for download.**\n\nError: ${saveErr.message}`,
+					embeds: [this.createCompletionEmbed(results, { view, background, framing, width, height }, cached)],
+				});
 			}
-
-			// Create Discord attachment
-			const zipAttachment = new AttachmentBuilder(resultZip, {
-				name: zipFilename,
-			});
-
-			// Final completion embed
-			const completionEmbed = this.createCompletionEmbed(results, { view, background, framing, width, height }, cached);
-
-			await interaction.editReply({
-				content: '',
-				embeds: [completionEmbed],
-				files: [zipAttachment],
-			});
-
-			logger.info(`Batch render completed: ${succeeded}/${totalCount} successful (${cached} cached) for user ${interaction.user.tag}`);
 
 			// Cleanup
 			await cleanupExtraction(extractDir);

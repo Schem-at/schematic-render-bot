@@ -162,12 +162,39 @@ function initDatabaseSchema() {
       result_file_size INTEGER,
       download_url TEXT,
       
+      -- Source file
+      source_file_path TEXT,
+      source_download_url TEXT,
+      
       -- Error info
       error_message TEXT,
       
       created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
   `);
+
+  // Migrate existing batch_jobs table to add source file columns if they don't exist
+  try {
+    db.exec(`
+      ALTER TABLE batch_jobs ADD COLUMN source_file_path TEXT;
+    `);
+  } catch (err: any) {
+    // Column already exists, ignore
+    if (!err.message?.includes('duplicate column')) {
+      logger.warn('Failed to add source_file_path column:', err);
+    }
+  }
+
+  try {
+    db.exec(`
+      ALTER TABLE batch_jobs ADD COLUMN source_download_url TEXT;
+    `);
+  } catch (err: any) {
+    // Column already exists, ignore
+    if (!err.message?.includes('duplicate column')) {
+      logger.warn('Failed to add source_download_url column:', err);
+    }
+  }
 
   // Batch items table - tracks individual schematics in a batch
   db.exec(`
@@ -361,7 +388,8 @@ export const statements = {
     UPDATE batch_jobs 
     SET status = 'completed', end_time = ?, duration = ?, 
         succeeded = ?, failed = ?, cached = ?,
-        result_file_path = ?, result_file_size = ?, download_url = ?
+        result_file_path = ?, result_file_size = ?, download_url = ?,
+        source_file_path = ?, source_download_url = ?
     WHERE id = ?
   `),
 

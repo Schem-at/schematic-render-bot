@@ -235,5 +235,166 @@ export function setupAdminRoutes(router: Router): void {
 			return json({ error: error.message || "Failed to fetch schema details" }, 500);
 		}
 	});
+
+	/**
+	 * Get batch jobs statistics
+	 */
+	router.get("/api/admin/batch-stats", async (req) => {
+		try {
+			const query = getQuery(req);
+			const days = parseInt(query.get("days") || "7");
+			const since = Date.now() - (days * 24 * 60 * 60 * 1000);
+			const sinceSeconds = Math.floor(since / 1000);
+
+			try {
+				const stats = statements.getBatchStats.get(sinceSeconds) as any;
+
+				return json({
+					period: `${days} days`,
+					since: new Date(since).toISOString(),
+					stats: {
+						totalBatches: stats?.total_batches || 0,
+						completedBatches: stats?.completed_batches || 0,
+						runningBatches: stats?.running_batches || 0,
+						failedBatches: stats?.failed_batches || 0,
+						totalSchematicsProcessed: stats?.total_schematics_processed || 0,
+						totalSucceeded: stats?.total_succeeded || 0,
+						totalFailed: stats?.total_failed || 0,
+						totalCached: stats?.total_cached || 0,
+						avgDuration: stats?.avg_duration || 0,
+						avgSuccessRate: stats?.avg_success_rate || 0,
+					},
+				});
+			} catch (dbError: any) {
+				// If table doesn't exist, return zeros
+				if (dbError.message?.includes('no such table') || dbError.message?.includes('batch_jobs')) {
+					logger.warn("batch_jobs table does not exist yet, returning zero stats");
+					return json({
+						period: `${days} days`,
+						since: new Date(since).toISOString(),
+						stats: {
+							totalBatches: 0,
+							completedBatches: 0,
+							runningBatches: 0,
+							failedBatches: 0,
+							totalSchematicsProcessed: 0,
+							totalSucceeded: 0,
+							totalFailed: 0,
+							totalCached: 0,
+							avgDuration: 0,
+							avgSuccessRate: 0,
+						},
+					});
+				} else {
+					throw dbError;
+				}
+			}
+		} catch (error: any) {
+			logger.error("Error fetching batch stats:", error);
+			return json({ error: error.message || "Failed to fetch batch stats" }, 500);
+		}
+	});
+
+	/**
+	 * Get recent batch jobs
+	 */
+	router.get("/api/admin/batch-jobs", async (req) => {
+		try {
+			const query = getQuery(req);
+			const limit = parseInt(query.get("limit") || "50");
+
+			// Check if batch_jobs table exists
+			try {
+				const batches = statements.getRecentBatchJobs.all(limit) as any[];
+
+				logger.info(`Fetched ${batches.length} batch jobs from database`);
+
+				return json({
+					batches: batches.map(batch => ({
+						id: batch.id,
+						userId: batch.user_id,
+						totalSchematics: batch.total_schematics,
+						succeeded: batch.succeeded,
+						failed: batch.failed,
+						cached: batch.cached,
+						status: batch.status,
+						startTime: batch.start_time,
+						endTime: batch.end_time,
+						duration: batch.duration,
+						resultFileSize: batch.result_file_size,
+						downloadUrl: batch.download_url,
+						sourceDownloadUrl: batch.source_download_url,
+						errorMessage: batch.error_message,
+						createdAt: batch.created_at,
+					})),
+				});
+			} catch (dbError: any) {
+				// If table doesn't exist, return empty array
+				if (dbError.message?.includes('no such table') || dbError.message?.includes('batch_jobs')) {
+					logger.warn("batch_jobs table does not exist yet, returning empty array");
+					return json({ batches: [] });
+				} else {
+					throw dbError;
+				}
+			}
+		} catch (error: any) {
+			logger.error("Error fetching batch jobs:", error);
+			return json({ error: error.message || "Failed to fetch batch jobs" }, 500);
+		}
+	});
+
+	/**
+	 * Get batch job details by ID
+	 */
+	router.get("/api/admin/batch-jobs/:id", async (req) => {
+		try {
+			const params = getParams(router, "/api/admin/batch-jobs/:id", req);
+			const id = params.id;
+
+			const batch = statements.getBatchJobById.get(id) as any;
+			if (!batch) {
+				return json({ error: "Batch job not found" }, 404);
+			}
+
+			// Get batch items
+			const items = statements.getBatchItems.all(id) as any[];
+
+			return json({
+				batch: {
+					id: batch.id,
+					userId: batch.user_id,
+					totalSchematics: batch.total_schematics,
+					succeeded: batch.succeeded,
+					failed: batch.failed,
+					cached: batch.cached,
+					status: batch.status,
+					options: JSON.parse(batch.options_json),
+					startTime: batch.start_time,
+					endTime: batch.end_time,
+					duration: batch.duration,
+					resultFileSize: batch.result_file_size,
+					downloadUrl: batch.download_url,
+					sourceDownloadUrl: batch.source_download_url,
+					errorMessage: batch.error_message,
+					createdAt: batch.created_at,
+				},
+				items: items.map(item => ({
+					id: item.id,
+					fileHash: item.file_hash,
+					filename: item.original_filename,
+					status: item.status,
+					renderId: item.render_id,
+					cachedRenderId: item.cached_render_id,
+					startTime: item.start_time,
+					endTime: item.end_time,
+					duration: item.duration,
+					errorMessage: item.error_message,
+				})),
+			});
+		} catch (error: any) {
+			logger.error("Error fetching batch job details:", error);
+			return json({ error: error.message || "Failed to fetch batch job details" }, 500);
+		}
+	});
 }
 

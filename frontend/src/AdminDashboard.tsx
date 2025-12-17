@@ -169,6 +169,7 @@ interface BatchJob {
   duration?: number;
   resultFileSize?: number;
   downloadUrl?: string;
+  sourceDownloadUrl?: string;
   errorMessage?: string;
   createdAt: number;
   options?: {
@@ -208,6 +209,28 @@ interface BatchStats {
     avgDuration: number;
     avgSuccessRate: number;
   };
+}
+
+// Thumbnail component with error handling
+function ThumbnailImage({ fileHash, filename }: { fileHash: string; filename: string }) {
+  const [hasError, setHasError] = useState(false);
+
+  if (hasError) {
+    return (
+      <div className="flex items-center justify-center h-full w-full">
+        <ImageIcon className="h-8 w-8 text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={`/api/analytics/thumbnail/${fileHash}`}
+      alt={filename}
+      className="w-full h-full object-cover"
+      onError={() => setHasError(true)}
+    />
+  );
 }
 
 export function AdminDashboard() {
@@ -1022,13 +1045,53 @@ export function AdminDashboard() {
                           onClick={() => fetchBatchDetails(batch.id)}
                         >
                           <CardContent className="p-4">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1 space-y-2">
+                            <div className="flex items-start gap-4">
+                              {/* Preview Thumbnail */}
+                              <div className="w-24 h-24 rounded-lg overflow-hidden bg-muted flex-shrink-0 flex items-center justify-center">
+                                {batch.status === 'completed' && batch.succeeded > 0 ? (
+                                  <div className="relative w-full h-full">
+                                    {/* Show first successful item thumbnail if available */}
+                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-green-500/20 to-blue-500/20">
+                                      <CheckCircle className="h-8 w-8 text-green-600" />
+                                    </div>
+                                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs text-center py-1">
+                                      {batch.succeeded}/{batch.totalSchematics}
+                                    </div>
+                                  </div>
+                                ) : batch.status === 'error' ? (
+                                  <div className="w-full h-full flex items-center justify-center bg-destructive/10">
+                                    <XCircle className="h-8 w-8 text-destructive" />
+                                  </div>
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <Clock className="h-8 w-8 text-muted-foreground animate-pulse" />
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex-1 space-y-2 min-w-0">
                                 <div className="flex items-center gap-2">
                                   <Badge variant={batch.status === 'completed' ? 'default' : batch.status === 'error' ? 'destructive' : 'secondary'}>
                                     {batch.status}
                                   </Badge>
-                                  <span className="text-sm font-mono text-muted-foreground">{batch.id.substring(0, 16)}...</span>
+                                  <span className="text-sm font-mono text-muted-foreground truncate">{batch.id.substring(0, 16)}...</span>
+                                  {batch.downloadUrl && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const url = batch.downloadUrl!.startsWith('http')
+                                          ? batch.downloadUrl
+                                          : `${window.location.origin}${batch.downloadUrl}`;
+                                        window.open(url, '_blank');
+                                      }}
+                                      className="ml-auto"
+                                    >
+                                      <Download className="h-4 w-4 mr-1" />
+                                      Download
+                                    </Button>
+                                  )}
                                 </div>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                                   <div>
@@ -1059,19 +1122,6 @@ export function AdminDashboard() {
                                   </div>
                                 )}
                               </div>
-                              {batch.downloadUrl && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    window.open(batch.downloadUrl, '_blank');
-                                  }}
-                                >
-                                  <Download className="h-4 w-4 mr-2" />
-                                  Download
-                                </Button>
-                              )}
                             </div>
                           </CardContent>
                         </Card>
@@ -1151,51 +1201,105 @@ export function AdminDashboard() {
                       </div>
                     )}
 
-                    {/* Batch Items */}
+                    {/* Batch Items with Previews */}
                     {batchItems.length > 0 && (
                       <div className="border-t pt-4">
-                        <div className="text-sm font-medium mb-2">Schematic Items ({batchItems.length})</div>
-                        <div className="max-h-96 overflow-y-auto space-y-2">
-                          {batchItems.map((item) => (
-                            <div
-                              key={item.id}
-                              className="flex items-center justify-between p-2 border rounded text-sm hover:bg-muted/50"
-                            >
-                              <div className="flex items-center gap-2 flex-1 min-w-0">
-                                {item.status === 'cached' && <Badge variant="outline" className="text-blue-600">Cached</Badge>}
-                                {item.status === 'rendered' && <Badge variant="outline" className="text-green-600">Rendered</Badge>}
-                                {item.status === 'failed' && <Badge variant="destructive">Failed</Badge>}
-                                {item.status === 'pending' && <Badge variant="secondary">Pending</Badge>}
-                                <span className="truncate font-mono text-xs">{item.filename}</span>
-                              </div>
-                              <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                                {item.duration !== undefined && item.duration > 0 && (
-                                  <span>{formatDuration(item.duration)}</span>
-                                )}
-                                {item.errorMessage && (
-                                  <span className="text-red-600 truncate max-w-xs" title={item.errorMessage}>
-                                    {item.errorMessage}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
+                        <div className="text-sm font-medium mb-4">Schematic Items ({batchItems.length})</div>
+                        <div className="max-h-96 overflow-y-auto">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {batchItems.map((item) => (
+                              <Card
+                                key={item.id}
+                                className={`hover:shadow-md transition-shadow ${item.status === 'failed' ? 'border-destructive' : ''
+                                  }`}
+                              >
+                                <CardContent className="p-3">
+                                  {/* Thumbnail Preview */}
+                                  <div className="aspect-square rounded-lg overflow-hidden bg-muted mb-2 flex items-center justify-center">
+                                    {(item.status === 'rendered' || item.status === 'cached') && item.fileHash ? (
+                                      <ThumbnailImage fileHash={item.fileHash} filename={item.filename} />
+                                    ) : item.status === 'failed' ? (
+                                      <div className="flex items-center justify-center h-full bg-destructive/10">
+                                        <XCircle className="h-8 w-8 text-destructive" />
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center justify-center h-full">
+                                        <Clock className="h-8 w-8 text-muted-foreground animate-pulse" />
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Item Info */}
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-2">
+                                      {item.status === 'cached' && <Badge variant="outline" className="text-blue-600 text-xs">Cached</Badge>}
+                                      {item.status === 'rendered' && <Badge variant="outline" className="text-green-600 text-xs">Rendered</Badge>}
+                                      {item.status === 'failed' && <Badge variant="destructive" className="text-xs">Failed</Badge>}
+                                      {item.status === 'pending' && <Badge variant="secondary" className="text-xs">Pending</Badge>}
+                                    </div>
+                                    <p className="text-xs font-mono truncate" title={item.filename}>
+                                      {item.filename}
+                                    </p>
+                                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                      {item.duration !== undefined && item.duration > 0 && (
+                                        <span>{formatDuration(item.duration)}</span>
+                                      )}
+                                      {item.errorMessage && (
+                                        <span className="text-red-600 truncate max-w-[120px]" title={item.errorMessage}>
+                                          {item.errorMessage.substring(0, 20)}...
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    {/* Download Button */}
-                    {selectedBatch.downloadUrl && (
-                      <div className="border-t pt-4">
+                    {/* Download Buttons */}
+                    <div className="border-t pt-4 space-y-2">
+                      {selectedBatch.downloadUrl && (
                         <Button
-                          onClick={() => window.open(selectedBatch.downloadUrl, '_blank')}
+                          onClick={() => {
+                            const url = selectedBatch.downloadUrl!.startsWith('http')
+                              ? selectedBatch.downloadUrl
+                              : `${window.location.origin}${selectedBatch.downloadUrl}`;
+                            window.open(url, '_blank');
+                          }}
                           className="w-full"
+                          size="lg"
                         >
-                          <Download className="h-4 w-4 mr-2" />
-                          Download Batch Result ({selectedBatch.resultFileSize ? formatBytes(selectedBatch.resultFileSize) : 'N/A'})
+                          <Download className="h-5 w-5 mr-2" />
+                          Download Rendered Images ({selectedBatch.resultFileSize ? formatBytes(selectedBatch.resultFileSize) : 'N/A'})
                         </Button>
-                      </div>
-                    )}
+                      )}
+                      {selectedBatch.sourceDownloadUrl && (
+                        <Button
+                          onClick={() => {
+                            const url = selectedBatch.sourceDownloadUrl!.startsWith('http')
+                              ? selectedBatch.sourceDownloadUrl
+                              : `${window.location.origin}${selectedBatch.sourceDownloadUrl}`;
+                            window.open(url, '_blank');
+                          }}
+                          className="w-full"
+                          size="lg"
+                          variant="outline"
+                        >
+                          <Download className="h-5 w-5 mr-2" />
+                          Download Source Zip
+                        </Button>
+                      )}
+                      {!selectedBatch.downloadUrl && !selectedBatch.sourceDownloadUrl && selectedBatch.status === 'completed' && (
+                        <div className="text-center p-4 border rounded bg-muted/50">
+                          <p className="text-sm text-muted-foreground">
+                            ⚠️ Downloads not available - files may have been cleaned up
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               )}

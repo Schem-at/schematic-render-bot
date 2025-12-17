@@ -4,7 +4,8 @@ import { logger } from "../shared/logger.js";
 let isInitialized = false;
 let initializationPromise: Promise<void> | null = null;
 const PORT = parseInt(process.env.PORT || "3000");
-const FRONTEND_URL = `http://localhost:${PORT}`;
+// Use FRONTEND_URL env var if set, otherwise use backend port (which proxies to frontend in dev)
+const FRONTEND_URL = process.env.FRONTEND_URL || `http://localhost:${PORT}`;
 
 // Track active browser instances for monitoring
 const activeBrowsers = new Map<string, { browser: Browser; page: Page; startTime: number }>();
@@ -161,7 +162,7 @@ export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions
 				);
 			},
 			{
-				timeout: 15000,
+				timeout: 30000, // Increased from 15s to 30s
 				polling: 500,
 			}
 		);
@@ -187,9 +188,15 @@ export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions
 				return new Promise((resolve, reject) => {
 					const timeout = setTimeout(() => {
 						reject(
-							new Error("Renderer initialization timeout after 10 seconds")
+							new Error("Renderer initialization timeout after 30 seconds")
 						);
-					}, 10000);
+					}, 30000); // Increased from 10 to 30 seconds
+
+					// Check if helpers exist first
+					if (!window.schematicHelpers || !window.schematicHelpers.waitForReady) {
+						reject(new Error("schematicHelpers.waitForReady not available"));
+						return;
+					}
 
 					window.schematicHelpers
 						.waitForReady()

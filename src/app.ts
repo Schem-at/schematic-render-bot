@@ -17,6 +17,7 @@ import {
 import { setupAdminRoutes } from "./api/routes/admin.bun.js";
 import { setupAnalyticsRoutes } from "./api/routes/analytics.bun.js";
 import { setupRenderRoutes } from "./api/routes/render.bun.js";
+import { setupBatchDownloadRoutes } from "./api/routes/batch-download.bun.js";
 // TODO: Convert synthase routes
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,6 +37,7 @@ const router = new Router();
 setupAdminRoutes(router);
 setupAnalyticsRoutes(router);
 setupRenderRoutes(router);
+setupBatchDownloadRoutes(router);
 
 // Health check
 router.get("/health", async (req) => {
