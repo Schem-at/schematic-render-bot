@@ -463,7 +463,7 @@ export default class Batch implements ICommand {
 
 				// For Discord embeds, construct full URLs (Discord needs absolute URLs)
 				// Frontend will use relative URLs from database and construct full URLs using window.location.origin
-				const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'https://schemat.io';
+				const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'https://render.schemat.io';
 				const fullResultUrl = `${baseUrl}${resultDownloadUrl}`;
 				const fullSourceUrl = `${baseUrl}${sourceDownloadUrl}`;
 

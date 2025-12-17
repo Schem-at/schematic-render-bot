@@ -20,6 +20,7 @@ services:
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
       - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
       - FRONTEND_URL=${FRONTEND_URL:-}
+      - API_BASE_URL=${API_BASE_URL:-https://render.schemat.io}
       - MAX_FILE_SIZE=${MAX_FILE_SIZE:-100MB}
       - UPLOAD_DIR=${UPLOAD_DIR:-./uploads}
       - LOG_LEVEL=${LOG_LEVEL:-info}
