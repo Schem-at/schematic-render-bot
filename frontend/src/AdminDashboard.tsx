@@ -7,7 +7,7 @@ import {
   RefreshCw, Trash2, Home, Activity, XCircle, Clock, Globe,
   TrendingUp, Image as ImageIcon, BarChart3, LineChart, PieChart, Database,
   FileText, Search, Zap, Server,
-  Layers, ChevronLeft, ChevronRight, Package, Download, CheckCircle, XCircle as XCircleIcon
+  Layers, ChevronLeft, ChevronRight, Package, Download, CheckCircle
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart as RechartsPie, Pie, Cell,
