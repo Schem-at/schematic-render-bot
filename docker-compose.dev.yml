@@ -13,6 +13,7 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
+      - ./data:/app/data
     restart: unless-stopped
 
   # Optional: Add database if needed later

@@ -2,6 +2,7 @@ import { Express } from "express";
 import { renderRouter } from "./render.js";
 import { adminRouter } from "./admin.js";
 import { analyticsRouter } from "./analytics.js";
+import { batchDownloadRouter } from "./batch-download.js";
 import { isPuppeteerReady } from "../../services/puppeteer.js";
 import { logger } from "../../shared/logger.js";
 import { synthaseRouter } from "./synthase_scripts.js";
@@ -24,6 +25,7 @@ export function setupRoutes(app: Express): void {
 	app.use("/api/admin", adminRouter);
 	app.use("/api/analytics", analyticsRouter);
 	app.use("/api/synthase", synthaseRouter);
+	app.use("/api/batch-download", batchDownloadRouter);
 	app.use("/api", renderRouter);
 
 	// API base endpoint
@@ -34,6 +36,7 @@ export function setupRoutes(app: Express): void {
 			endpoints: [
 				"GET /health",
 				"POST /api/render-schematic",
+				"GET /api/batch-download/:batchId",
 				"GET /api/admin/metrics",
 				"GET /api/admin/active-renders",
 				"GET /api/admin/render-history",

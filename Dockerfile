@@ -67,7 +67,7 @@ COPY start.sh ./start.sh
 COPY healthcheck.sh ./healthcheck.sh
 RUN chmod +x start.sh healthcheck.sh
 
-RUN mkdir -p /app/uploads /app/logs
+RUN mkdir -p /app/uploads /app/logs /app/data/storage /app/data/cache /app/data/batch-downloads
 
 # Default port, but can be overridden via PORT environment variable
 ENV PORT=3000

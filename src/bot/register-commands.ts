@@ -221,3 +221,4 @@ export async function registerSlashCommands() {
     logger.error('Failed to register slash commands:', error);
   }
 }
+

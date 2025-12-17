@@ -7,8 +7,12 @@ import {
 } from 'discord.js';
 import { ICommand } from '../command';
 import { logger } from '../../shared/logger';
-import { processRender } from '../../services/render-service';
-import { readFile } from 'fs/promises';
+import { processRender, getCachedRender } from '../../services/render-service';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
+import { statements } from '../../services/database';
+import { calculateHash } from '../../services/storage';
 import {
 	extractZipSecurely,
 	createResultZip,
@@ -25,6 +29,23 @@ const DELAY_BETWEEN_RENDERS_MS = 2000; // 2 second delay between renders to let 
 const BATCH_SIZE = 5; // Process this many before a longer pause
 const BATCH_PAUSE_MS = 5000; // 5 second pause between batches
 const MAX_RETRIES = 2; // Retry failed renders once
+
+// Batch file storage
+const BATCH_STORAGE_DIR = join(process.cwd(), 'data', 'batch-downloads');
+const BATCH_FILE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+// Store batch file metadata: batchId -> { path, createdAt, userId, filename }
+const batchFiles = new Map<string, { path: string; createdAt: number; userId: string; filename: string }>();
+
+// Initialize batch storage directory
+(async () => {
+	try {
+		await mkdir(BATCH_STORAGE_DIR, { recursive: true });
+		logger.info(`Batch storage directory ready: ${BATCH_STORAGE_DIR}`);
+	} catch (err) {
+		logger.error('Failed to create batch storage directory:', err);
+	}
+})();
 
 export default class Batch implements ICommand {
 	info = new SlashCommandBuilder()
@@ -102,6 +123,7 @@ export default class Batch implements ICommand {
 		await interaction.deferReply();
 
 		let extractDir: string | null = null;
+		let batchId: string | undefined = undefined;
 
 		try {
 			// Download the zip file
@@ -155,13 +177,10 @@ export default class Batch implements ICommand {
 			// Create initial progress embed
 			const totalCount = extraction.schematics.length;
 			this.batchStartTime = Date.now();
-			const progressEmbed = this.createProgressEmbed(
-				0,
-				totalCount,
-				[],
-				{ view, background, framing, width, height }
-			);
-			await interaction.editReply({ embeds: [progressEmbed] });
+
+			// Create batch job record
+			const batchId = `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+			const batchStartTime = Date.now();
 
 			// Render options
 			const renderOptions = {
@@ -174,56 +193,138 @@ export default class Batch implements ICommand {
 				framing,
 			};
 
+			// Insert batch job
+			statements.insertBatchJob.run(
+				batchId,
+				interaction.user.id,
+				interaction.channelId,
+				interaction.id,
+				totalCount,
+				'running',
+				JSON.stringify(renderOptions),
+				batchStartTime
+			);
+
+			const progressEmbed = this.createProgressEmbed(
+				0,
+				totalCount,
+				[],
+				{ view, background, framing, width, height }
+			);
+			await interaction.editReply({ embeds: [progressEmbed] });
+
 			// Process each schematic with delays and batching to prevent crashes
 			const results: BatchRenderResult[] = [];
 			let completed = 0;
 			let succeeded = 0;
 			let failed = 0;
+			let cached = 0;
 
 			for (let i = 0; i < extraction.schematics.length; i++) {
 				const schematic = extraction.schematics[i];
+				const itemId = `${batchId}-item-${i}`;
+				const itemStartTime = Date.now();
 				let lastError: Error | null = null;
 				let renderSucceeded = false;
+				let wasCached = false;
 
-				// Retry loop for failed renders
-				for (let attempt = 0; attempt <= MAX_RETRIES && !renderSucceeded; attempt++) {
+				// Read schematic file
+				const schematicBuffer = await readFile(schematic.path);
+				const fileHash = calculateHash(schematicBuffer);
+
+				// Insert batch item
+				statements.insertBatchItem.run(
+					itemId,
+					batchId,
+					fileHash,
+					schematic.name,
+					'pending',
+					itemStartTime
+				);
+
+				// Check cache first
+				const cachedRender = getCachedRender(fileHash, renderOptions);
+				if (cachedRender) {
 					try {
-						if (attempt > 0) {
-							logger.info(`Retrying ${schematic.name} (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
-							// Wait longer before retry
-							await this.delay(DELAY_BETWEEN_RENDERS_MS * 2);
+						// Get cached artifact
+						const artifacts = statements.getArtifactsByRender.all(cachedRender.id) as any[];
+						const imageArtifact = artifacts.find((a: any) => a.type === 'image');
+
+						if (imageArtifact) {
+							const fs = await import('fs/promises');
+							const cachedBuffer = await fs.readFile(imageArtifact.file_path);
+
+							results.push({
+								name: schematic.name,
+								success: true,
+								buffer: cachedBuffer,
+							});
+							succeeded++;
+							cached++;
+							renderSucceeded = true;
+							wasCached = true;
+
+							// Update batch item
+							statements.updateBatchItemCached.run(
+								cachedRender.id,
+								Date.now(),
+								itemId
+							);
+
+							logger.info(`[${batchId}] Cache hit for ${schematic.name}`);
 						}
+					} catch (cacheErr) {
+						logger.warn(`[${batchId}] Failed to read cache for ${schematic.name}, rendering...`);
+					}
+				}
 
-						// Read schematic file
-						const schematicBuffer = await readFile(schematic.path);
+				// Retry loop for failed renders (only if not cached)
+				if (!renderSucceeded) {
+					for (let attempt = 0; attempt <= MAX_RETRIES && !renderSucceeded; attempt++) {
+						try {
+							if (attempt > 0) {
+								logger.info(`Retrying ${schematic.name} (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+								// Wait longer before retry
+								await this.delay(DELAY_BETWEEN_RENDERS_MS * 2);
+							}
 
-						// Render the schematic
-						const result = await processRender({
-							schematicData: schematicBuffer,
-							options: renderOptions,
-							type: 'image',
-							source: 'discord',
-							originalFilename: schematic.name,
-							userId: interaction.user.id,
-							channelId: interaction.channelId,
-							messageId: interaction.id,
-						});
+							// Render the schematic
+							const result = await processRender({
+								schematicData: schematicBuffer,
+								options: renderOptions,
+								type: 'image',
+								source: 'discord',
+								originalFilename: schematic.name,
+								userId: interaction.user.id,
+								channelId: interaction.channelId,
+								messageId: interaction.id,
+							}, true); // Skip cache check since we already checked
 
-						results.push({
-							name: schematic.name,
-							success: true,
-							buffer: result.outputBuffer,
-						});
-						succeeded++;
-						renderSucceeded = true;
-					} catch (err: any) {
-						lastError = err;
-						logger.error(`Failed to render ${schematic.name} (attempt ${attempt + 1}):`, err.message || err);
+							results.push({
+								name: schematic.name,
+								success: true,
+								buffer: result.outputBuffer,
+							});
+							succeeded++;
+							renderSucceeded = true;
 
-						// If it's a page crash, wait longer before retry
-						if (err.message?.includes('Page crashed') || err.message?.includes('Target closed')) {
-							logger.warn(`Browser crash detected, waiting before retry...`);
-							await this.delay(BATCH_PAUSE_MS);
+							// Update batch item
+							const itemDuration = Date.now() - itemStartTime;
+							statements.updateBatchItemRendered.run(
+								result.renderId,
+								Date.now(),
+								itemDuration,
+								itemId
+							);
+						} catch (err: any) {
+							lastError = err;
+							logger.error(`Failed to render ${schematic.name} (attempt ${attempt + 1}):`, err.message || err);
+
+							// If it's a page crash, wait longer before retry
+							if (err.message?.includes('Page crashed') || err.message?.includes('Target closed')) {
+								logger.warn(`Browser crash detected, waiting before retry...`);
+								await this.delay(BATCH_PAUSE_MS);
+							}
 						}
 					}
 				}
@@ -236,6 +337,15 @@ export default class Batch implements ICommand {
 						error: lastError?.message || 'Unknown error (after retries)',
 					});
 					failed++;
+
+					// Update batch item
+					const itemDuration = Date.now() - itemStartTime;
+					statements.updateBatchItemFailed.run(
+						Date.now(),
+						itemDuration,
+						lastError?.message || 'Unknown error',
+						itemId
+					);
 				}
 
 				completed++;
@@ -246,7 +356,8 @@ export default class Batch implements ICommand {
 						completed,
 						totalCount,
 						results,
-						{ view, background, framing, width, height }
+						{ view, background, framing, width, height },
+						cached
 					);
 					try {
 						await interaction.editReply({ embeds: [updatedEmbed] });
@@ -274,10 +385,20 @@ export default class Batch implements ICommand {
 			}
 
 			// Create the result zip
-			await this.updateProgress(interaction, `✅ Rendered ${succeeded}/${totalCount} schematics. Creating zip file...`);
+			await this.updateProgress(interaction, `✅ Rendered ${succeeded}/${totalCount} schematics (${cached} cached). Creating zip file...`);
 
 			const successfulResults = results.filter((r) => r.success);
+			const batchDuration = Date.now() - batchStartTime;
+
 			if (successfulResults.length === 0) {
+				// Update batch job as failed
+				statements.updateBatchJobError.run(
+					Date.now(),
+					batchDuration,
+					'All renders failed',
+					batchId
+				);
+
 				const failedEmbed = this.createFailureEmbed(results);
 				await interaction.editReply({
 					content: '❌ **All renders failed!**',
@@ -288,25 +409,93 @@ export default class Batch implements ICommand {
 			}
 
 			const resultZip = await createResultZip(successfulResults);
+			const zipFilename = `${attachment.name.replace('.zip', '')}_renders.zip`;
+			const downloadBatchId = randomUUID();
 
 			// Check if result is too large for Discord
 			if (resultZip.length > DISCORD_FILE_LIMIT) {
-				// Try to split or provide download link
-				await interaction.editReply({
-					content: `⚠️ **Result zip is too large for Discord (${(resultZip.length / 1024 / 1024).toFixed(1)}MB).**\n\nTry reducing the resolution or processing fewer schematics at once.`,
-					embeds: [this.createCompletionEmbed(results, { view, background, framing, width, height })],
-				});
+				// Save to disk and provide download link
+				const zipPath = join(BATCH_STORAGE_DIR, `${downloadBatchId}.zip`);
+
+				try {
+					await writeFile(zipPath, resultZip);
+
+					// Store metadata
+					batchFiles.set(downloadBatchId, {
+						path: zipPath,
+						createdAt: Date.now(),
+						userId: interaction.user.id,
+						filename: zipFilename,
+					});
+
+					// Get base URL from environment or construct it
+					const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'https://schemat.io';
+					const downloadUrl = `${baseUrl}/api/batch-download/${downloadBatchId}`;
+
+					// Update batch job
+					statements.updateBatchJobComplete.run(
+						Date.now(),
+						batchDuration,
+						succeeded,
+						failed,
+						cached,
+						zipPath,
+						resultZip.length,
+						downloadUrl,
+						batchId
+					);
+
+					const completionEmbed = this.createCompletionEmbed(results, { view, background, framing, width, height }, cached);
+					completionEmbed.addFields({
+						name: '📥 Download Link',
+						value: `[Click here to download](${downloadUrl})\n\n⚠️ **File is ${(resultZip.length / 1024 / 1024).toFixed(1)}MB** (Discord limit: 25MB)\n⏰ Link expires in 24 hours`,
+						inline: false,
+					});
+
+					await interaction.editReply({
+						content: '',
+						embeds: [completionEmbed],
+					});
+
+					logger.info(`Saved large batch file: ${downloadBatchId} (${(resultZip.length / 1024 / 1024).toFixed(1)}MB) for user ${interaction.user.tag}`);
+				} catch (saveErr: any) {
+					logger.error('Failed to save batch file:', saveErr);
+					statements.updateBatchJobError.run(
+						Date.now(),
+						batchDuration,
+						`Failed to save result: ${saveErr.message}`,
+						batchId
+					);
+					await interaction.editReply({
+						content: `⚠️ **Result zip is too large for Discord (${(resultZip.length / 1024 / 1024).toFixed(1)}MB) and failed to save for download.**\n\nTry reducing the resolution or processing fewer schematics at once.`,
+						embeds: [this.createCompletionEmbed(results, { view, background, framing, width, height }, cached)],
+					});
+				}
+
 				await cleanupExtraction(extractDir);
 				return;
 			}
 
+			// Update batch job
+			statements.updateBatchJobComplete.run(
+				Date.now(),
+				batchDuration,
+				succeeded,
+				failed,
+				cached,
+				null, // No file path for Discord uploads
+				resultZip.length,
+				null, // No download URL for Discord uploads
+				batchId
+			);
+
 			// Create Discord attachment
 			const zipAttachment = new AttachmentBuilder(resultZip, {
-				name: `${attachment.name.replace('.zip', '')}_renders.zip`,
+				name: zipFilename,
 			});
 
 			// Final completion embed
-			const completionEmbed = this.createCompletionEmbed(results, { view, background, framing, width, height });
+			const completionEmbed = this.createCompletionEmbed(results, { view, background, framing, width, height }, cached);
 
 			await interaction.editReply({
 				content: '',
@@ -314,13 +503,28 @@ export default class Batch implements ICommand {
 				files: [zipAttachment],
 			});
 
-			logger.info(`Batch render completed: ${succeeded}/${totalCount} successful for user ${interaction.user.tag}`);
+			logger.info(`Batch render completed: ${succeeded}/${totalCount} successful (${cached} cached) for user ${interaction.user.tag}`);
 
 			// Cleanup
 			await cleanupExtraction(extractDir);
 
 		} catch (error: any) {
 			logger.error('Batch render failed:', error);
+
+			// Update batch job as error if it was created
+			if (batchId) {
+				try {
+					const batchDuration = Date.now() - (this.batchStartTime || Date.now());
+					statements.updateBatchJobError.run(
+						Date.now(),
+						batchDuration,
+						error.message || 'Unknown error',
+						batchId
+					);
+				} catch (dbErr) {
+					logger.error('Failed to update batch job error:', dbErr);
+				}
+			}
 
 			await interaction.editReply({
 				content: `❌ **Batch render failed:** ${error.message}`,
@@ -347,7 +551,8 @@ export default class Batch implements ICommand {
 		completed: number,
 		total: number,
 		results: BatchRenderResult[],
-		options: { view: string; background: string; framing: string; width: number; height: number }
+		options: { view: string; background: string; framing: string; width: number; height: number },
+		cached: number = 0
 	): EmbedBuilder {
 		const percentage = Math.round((completed / total) * 100);
 		const progressBar = this.createProgressBar(percentage);
@@ -385,6 +590,11 @@ export default class Batch implements ICommand {
 					inline: true,
 				},
 				{
+					name: '💾 Cached',
+					value: `${cached}`,
+					inline: true,
+				},
+				{
 					name: '❌ Failed',
 					value: `${failed}`,
 					inline: true,
@@ -406,7 +616,8 @@ export default class Batch implements ICommand {
 
 	private createCompletionEmbed(
 		results: BatchRenderResult[],
-		options: { view: string; background: string; framing: string; width: number; height: number }
+		options: { view: string; background: string; framing: string; width: number; height: number },
+		cached: number = 0
 	): EmbedBuilder {
 		const succeeded = results.filter((r) => r.success).length;
 		const failed = results.filter((r) => !r.success).length;
@@ -423,6 +634,11 @@ export default class Batch implements ICommand {
 					inline: true,
 				},
 				{
+					name: '💾 Cached',
+					value: `${cached}`,
+					inline: true,
+				},
+				{
 					name: '❌ Failed',
 					value: `${failed}`,
 					inline: true,
@@ -430,6 +646,11 @@ export default class Batch implements ICommand {
 				{
 					name: '📊 Success Rate',
 					value: `${Math.round((succeeded / total) * 100)}%`,
+					inline: true,
+				},
+				{
+					name: '⚡ Cache Hit Rate',
+					value: cached > 0 ? `${Math.round((cached / succeeded) * 100)}%` : '0%',
 					inline: true,
 				},
 				{
@@ -489,3 +710,52 @@ export default class Batch implements ICommand {
 		return new Promise(resolve => setTimeout(resolve, ms));
 	}
 }
+
+/**
+ * Get batch file by ID (for download endpoint)
+ */
+export function getBatchFile(batchId: string): { path: string; filename: string } | null {
+	const fileInfo = batchFiles.get(batchId);
+	if (!fileInfo) {
+		return null;
+	}
+
+	// Check if expired
+	if (Date.now() - fileInfo.createdAt > BATCH_FILE_TTL) {
+		batchFiles.delete(batchId);
+		return null;
+	}
+
+	return {
+		path: fileInfo.path,
+		filename: fileInfo.filename,
+	};
+}
+
+/**
+ * Cleanup expired batch files
+ */
+export async function cleanupExpiredBatchFiles(): Promise<void> {
+	const now = Date.now();
+	const expiredIds: string[] = [];
+
+	for (const [batchId, fileInfo] of batchFiles.entries()) {
+		if (now - fileInfo.createdAt > BATCH_FILE_TTL) {
+			expiredIds.push(batchId);
+		}
+	}
+
+	for (const batchId of expiredIds) {
+		const fileInfo = batchFiles.get(batchId);
+		if (fileInfo) {
+			try {
+				await import('fs/promises').then(fs => fs.unlink(fileInfo.path));
+				batchFiles.delete(batchId);
+				logger.info(`Cleaned up expired batch file: ${batchId}`);
+			} catch (err) {
+				logger.warn(`Failed to delete expired batch file ${batchId}:`, err);
+			}
+		}
+	}
+}
+

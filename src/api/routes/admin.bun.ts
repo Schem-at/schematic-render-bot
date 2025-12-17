@@ -236,3 +236,4 @@ export function setupAdminRoutes(router: Router): void {
 		}
 	});
 }
+

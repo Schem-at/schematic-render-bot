@@ -328,3 +328,4 @@ export function setupAnalyticsRoutes(router: Router): void {
 		}
 	});
 }
+

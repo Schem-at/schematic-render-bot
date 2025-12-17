@@ -260,3 +260,4 @@ export default {
 	MAX_TOTAL_SIZE,
 	SUPPORTED_SCHEMATIC_FORMATS,
 };
+

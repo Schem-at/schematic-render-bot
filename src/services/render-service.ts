@@ -35,20 +35,62 @@ export interface RenderResult {
 /**
  * Main render service with caching and database integration
  */
-export async function processRender(request: RenderRequest): Promise<RenderResult> {
+export async function processRender(request: RenderRequest, skipCache: boolean = false): Promise<RenderResult> {
   const startTime = Date.now();
   const renderId = `render-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
+
   // Calculate file hash
   const fileHash = calculateHash(request.schematicData);
   logger.info(`[${renderId}] Processing render for file: ${fileHash}`);
-  
+
+  // Check cache first (unless explicitly skipped)
+  if (!skipCache) {
+    const cached = getCachedRender(fileHash, request.options);
+    if (cached) {
+      logger.info(`[${renderId}] Using cached render: ${cached.id}`);
+
+      // Get the cached artifact
+      const artifacts = statements.getArtifactsByRender.all(cached.id) as any[];
+      const imageArtifact = artifacts.find(a => a.type === request.type);
+
+      if (imageArtifact) {
+        // Read the artifact file directly
+        const fs = await import('fs/promises');
+        try {
+          const cachedBuffer = await fs.readFile(imageArtifact.file_path);
+
+          // Update access count
+          statements.updateFileAccess.run(fileHash);
+
+          logger.info(`[${renderId}] ✅ Cache hit! Serving cached render (${(cachedBuffer.length / 1024).toFixed(1)}KB)`);
+
+          return {
+            renderId: cached.id,
+            fileHash,
+            outputBuffer: cachedBuffer,
+            artifacts: {
+              [request.type]: imageArtifact.id,
+            },
+            metadata: {
+              duration: cached.duration || 0,
+              meshCount: cached.mesh_count,
+              size: cachedBuffer.length,
+            },
+          };
+        } catch (readErr) {
+          logger.warn(`[${renderId}] Failed to read cached artifact, falling back to render:`, readErr);
+          // Fall through to render
+        }
+      }
+    }
+  }
+
   // Store original schematic file
   await storeFile(request.schematicData, {
     originalFilename: request.originalFilename,
     mimeType: 'application/octet-stream',
   });
-  
+
   // Insert render record
   const format = (request.options as any).format || 'image/png';
   statements.insertRender.run(
@@ -66,20 +108,20 @@ export async function processRender(request: RenderRequest): Promise<RenderResul
     request.source || 'api',
     request.userId || null
   );
-  
+
   try {
     let outputBuffer: Buffer;
     let meshCount: number | undefined;
-    
+
     // Perform the actual rendering
     if (request.type === 'image') {
       outputBuffer = await renderSchematic(request.schematicData, request.options as RenderOptions);
     } else {
       outputBuffer = await renderSchematicVideo(request.schematicData, request.options as VideoRenderOptions);
     }
-    
+
     const duration = Date.now() - startTime;
-    
+
     // Store main artifact
     const mainArtifact = await storeArtifact(
       renderId,
@@ -92,18 +134,18 @@ export async function processRender(request: RenderRequest): Promise<RenderResul
         height: request.options.height,
       }
     );
-    
+
     const artifacts: RenderResult['artifacts'] = {};
-    
+
     if (request.type === 'image') {
       artifacts.image = mainArtifact.id;
-      
+
       // Generate thumbnail
       const thumbnailBuffer = await sharp(outputBuffer)
         .resize(400, 300, { fit: 'inside' })
         .png()
         .toBuffer();
-      
+
       const thumbnailArtifact = await storeArtifact(
         renderId,
         fileHash,
@@ -115,15 +157,15 @@ export async function processRender(request: RenderRequest): Promise<RenderResul
           height: 300,
         }
       );
-      
+
       artifacts.thumbnail = thumbnailArtifact.id;
     } else {
       artifacts.video = mainArtifact.id;
-      
+
       // For videos, we could extract a frame as thumbnail
       // For now, skip this and implement later when needed
     }
-    
+
     // Update render record with completion
     statements.updateRenderComplete.run(
       Date.now(),
@@ -131,9 +173,9 @@ export async function processRender(request: RenderRequest): Promise<RenderResul
       meshCount || null,
       renderId
     );
-    
+
     logger.info(`[${renderId}] ✅ Render completed in ${duration}ms`);
-    
+
     return {
       renderId,
       fileHash,
@@ -145,10 +187,10 @@ export async function processRender(request: RenderRequest): Promise<RenderResul
         size: outputBuffer.length,
       },
     };
-    
+
   } catch (error: any) {
     const duration = Date.now() - startTime;
-    
+
     // Update render record with error
     statements.updateRenderError.run(
       Date.now(),
@@ -156,7 +198,7 @@ export async function processRender(request: RenderRequest): Promise<RenderResul
       error.message || String(error),
       renderId
     );
-    
+
     logger.error(`[${renderId}] ❌ Render failed:`, error);
     throw error;
   }
@@ -167,11 +209,11 @@ export async function processRender(request: RenderRequest): Promise<RenderResul
  */
 export function getCachedRender(fileHash: string, options: any) {
   const renders = statements.getRendersByFileHash.all(fileHash) as any[];
-  
+
   // Find a matching completed render with same options
   const cached = renders.find(r => {
     if (r.status !== 'completed') return false;
-    
+
     try {
       const renderOptions = JSON.parse(r.options_json);
       // Simple comparison - could be more sophisticated
@@ -180,7 +222,7 @@ export function getCachedRender(fileHash: string, options: any) {
       return false;
     }
   });
-  
+
   return cached;
 }
 

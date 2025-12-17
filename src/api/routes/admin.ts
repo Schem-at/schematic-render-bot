@@ -234,5 +234,122 @@ router.get("/schemas/:hash", (req, res) => {
     }
 });
 
+/**
+ * Get batch jobs statistics
+ */
+router.get("/batch-stats", (req, res) => {
+    try {
+        const days = parseInt(req.query.days as string) || 7;
+        const since = Date.now() - (days * 24 * 60 * 60 * 1000);
+        const sinceSeconds = Math.floor(since / 1000);
+
+        const stats = statements.getBatchStats.get(sinceSeconds) as any;
+
+        res.json({
+            period: `${days} days`,
+            since: new Date(since).toISOString(),
+            stats: {
+                totalBatches: stats?.total_batches || 0,
+                completedBatches: stats?.completed_batches || 0,
+                runningBatches: stats?.running_batches || 0,
+                failedBatches: stats?.failed_batches || 0,
+                totalSchematicsProcessed: stats?.total_schematics_processed || 0,
+                totalSucceeded: stats?.total_succeeded || 0,
+                totalFailed: stats?.total_failed || 0,
+                totalCached: stats?.total_cached || 0,
+                avgDuration: stats?.avg_duration || 0,
+                avgSuccessRate: stats?.avg_success_rate || 0,
+            },
+        });
+    } catch (error: any) {
+        logger.error("Error fetching batch stats:", error);
+        res.status(500).json({ error: error.message || "Failed to fetch batch stats" });
+    }
+});
+
+/**
+ * Get recent batch jobs
+ */
+router.get("/batch-jobs", (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit as string) || 50;
+        const batches = statements.getRecentBatchJobs.all(limit) as any[];
+
+        res.json({
+            batches: batches.map(batch => ({
+                id: batch.id,
+                userId: batch.user_id,
+                totalSchematics: batch.total_schematics,
+                succeeded: batch.succeeded,
+                failed: batch.failed,
+                cached: batch.cached,
+                status: batch.status,
+                startTime: batch.start_time,
+                endTime: batch.end_time,
+                duration: batch.duration,
+                resultFileSize: batch.result_file_size,
+                downloadUrl: batch.download_url,
+                errorMessage: batch.error_message,
+                createdAt: batch.created_at,
+            })),
+        });
+    } catch (error: any) {
+        logger.error("Error fetching batch jobs:", error);
+        res.status(500).json({ error: error.message || "Failed to fetch batch jobs" });
+    }
+});
+
+/**
+ * Get batch job details by ID
+ */
+router.get("/batch-jobs/:id", (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const batch = statements.getBatchJobById.get(id) as any;
+        if (!batch) {
+            return res.status(404).json({ error: "Batch job not found" });
+        }
+
+        // Get batch items
+        const items = statements.getBatchItems.all(id) as any[];
+
+        res.json({
+            batch: {
+                id: batch.id,
+                userId: batch.user_id,
+                totalSchematics: batch.total_schematics,
+                succeeded: batch.succeeded,
+                failed: batch.failed,
+                cached: batch.cached,
+                status: batch.status,
+                options: JSON.parse(batch.options_json),
+                startTime: batch.start_time,
+                endTime: batch.end_time,
+                duration: batch.duration,
+                resultFileSize: batch.result_file_size,
+                downloadUrl: batch.download_url,
+                errorMessage: batch.error_message,
+                createdAt: batch.created_at,
+            },
+            items: items.map(item => ({
+                id: item.id,
+                fileHash: item.file_hash,
+                filename: item.original_filename,
+                status: item.status,
+                renderId: item.render_id,
+                cachedRenderId: item.cached_render_id,
+                startTime: item.start_time,
+                endTime: item.end_time,
+                duration: item.duration,
+                errorMessage: item.error_message,
+            })),
+        });
+    } catch (error: any) {
+        logger.error("Error fetching batch job details:", error);
+        res.status(500).json({ error: error.message || "Failed to fetch batch job details" });
+    }
+});
+
 export { router as adminRouter };
 

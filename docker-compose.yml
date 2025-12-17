@@ -26,6 +26,7 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "sh", "-c", "curl -f http://localhost:$${PORT:-3000}/health || exit 1"]
       interval: 30s
