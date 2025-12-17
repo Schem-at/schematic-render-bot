@@ -243,24 +243,49 @@ router.get("/batch-stats", (req, res) => {
         const since = Date.now() - (days * 24 * 60 * 60 * 1000);
         const sinceSeconds = Math.floor(since / 1000);
 
-        const stats = statements.getBatchStats.get(sinceSeconds) as any;
+        try {
+            const stats = statements.getBatchStats.get(sinceSeconds) as any;
 
-        res.json({
-            period: `${days} days`,
-            since: new Date(since).toISOString(),
-            stats: {
-                totalBatches: stats?.total_batches || 0,
-                completedBatches: stats?.completed_batches || 0,
-                runningBatches: stats?.running_batches || 0,
-                failedBatches: stats?.failed_batches || 0,
-                totalSchematicsProcessed: stats?.total_schematics_processed || 0,
-                totalSucceeded: stats?.total_succeeded || 0,
-                totalFailed: stats?.total_failed || 0,
-                totalCached: stats?.total_cached || 0,
-                avgDuration: stats?.avg_duration || 0,
-                avgSuccessRate: stats?.avg_success_rate || 0,
-            },
-        });
+            res.json({
+                period: `${days} days`,
+                since: new Date(since).toISOString(),
+                stats: {
+                    totalBatches: stats?.total_batches || 0,
+                    completedBatches: stats?.completed_batches || 0,
+                    runningBatches: stats?.running_batches || 0,
+                    failedBatches: stats?.failed_batches || 0,
+                    totalSchematicsProcessed: stats?.total_schematics_processed || 0,
+                    totalSucceeded: stats?.total_succeeded || 0,
+                    totalFailed: stats?.total_failed || 0,
+                    totalCached: stats?.total_cached || 0,
+                    avgDuration: stats?.avg_duration || 0,
+                    avgSuccessRate: stats?.avg_success_rate || 0,
+                },
+            });
+        } catch (dbError: any) {
+            // If table doesn't exist, return zeros
+            if (dbError.message?.includes('no such table') || dbError.message?.includes('batch_jobs')) {
+                logger.warn("batch_jobs table does not exist yet, returning zero stats");
+                res.json({
+                    period: `${days} days`,
+                    since: new Date(since).toISOString(),
+                    stats: {
+                        totalBatches: 0,
+                        completedBatches: 0,
+                        runningBatches: 0,
+                        failedBatches: 0,
+                        totalSchematicsProcessed: 0,
+                        totalSucceeded: 0,
+                        totalFailed: 0,
+                        totalCached: 0,
+                        avgDuration: 0,
+                        avgSuccessRate: 0,
+                    },
+                });
+            } else {
+                throw dbError;
+            }
+        }
     } catch (error: any) {
         logger.error("Error fetching batch stats:", error);
         res.status(500).json({ error: error.message || "Failed to fetch batch stats" });
@@ -273,26 +298,40 @@ router.get("/batch-stats", (req, res) => {
 router.get("/batch-jobs", (req, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 50;
-        const batches = statements.getRecentBatchJobs.all(limit) as any[];
 
-        res.json({
-            batches: batches.map(batch => ({
-                id: batch.id,
-                userId: batch.user_id,
-                totalSchematics: batch.total_schematics,
-                succeeded: batch.succeeded,
-                failed: batch.failed,
-                cached: batch.cached,
-                status: batch.status,
-                startTime: batch.start_time,
-                endTime: batch.end_time,
-                duration: batch.duration,
-                resultFileSize: batch.result_file_size,
-                downloadUrl: batch.download_url,
-                errorMessage: batch.error_message,
-                createdAt: batch.created_at,
-            })),
-        });
+        // Check if batch_jobs table exists
+        try {
+            const batches = statements.getRecentBatchJobs.all(limit) as any[];
+
+            logger.info(`Fetched ${batches.length} batch jobs from database`);
+
+            res.json({
+                batches: batches.map(batch => ({
+                    id: batch.id,
+                    userId: batch.user_id,
+                    totalSchematics: batch.total_schematics,
+                    succeeded: batch.succeeded,
+                    failed: batch.failed,
+                    cached: batch.cached,
+                    status: batch.status,
+                    startTime: batch.start_time,
+                    endTime: batch.end_time,
+                    duration: batch.duration,
+                    resultFileSize: batch.result_file_size,
+                    downloadUrl: batch.download_url,
+                    errorMessage: batch.error_message,
+                    createdAt: batch.created_at,
+                })),
+            });
+        } catch (dbError: any) {
+            // If table doesn't exist, return empty array
+            if (dbError.message?.includes('no such table') || dbError.message?.includes('batch_jobs')) {
+                logger.warn("batch_jobs table does not exist yet, returning empty array");
+                res.json({ batches: [] });
+            } else {
+                throw dbError;
+            }
+        }
     } catch (error: any) {
         logger.error("Error fetching batch jobs:", error);
         res.status(500).json({ error: error.message || "Failed to fetch batch jobs" });

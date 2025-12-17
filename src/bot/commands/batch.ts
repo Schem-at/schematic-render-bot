@@ -194,16 +194,22 @@ export default class Batch implements ICommand {
 			};
 
 			// Insert batch job
-			statements.insertBatchJob.run(
-				batchId,
-				interaction.user.id,
-				interaction.channelId,
-				interaction.id,
-				totalCount,
-				'running',
-				JSON.stringify(renderOptions),
-				batchStartTime
-			);
+			try {
+				statements.insertBatchJob.run(
+					batchId,
+					interaction.user.id,
+					interaction.channelId,
+					interaction.id,
+					totalCount,
+					'running',
+					JSON.stringify(renderOptions),
+					batchStartTime
+				);
+				logger.info(`[${batchId}] Created batch job record in database`);
+			} catch (dbErr: any) {
+				logger.error(`[${batchId}] Failed to create batch job record:`, dbErr);
+				// Continue anyway - batch will still work, just won't be tracked
+			}
 
 			const progressEmbed = this.createProgressEmbed(
 				0,
@@ -478,17 +484,22 @@ export default class Batch implements ICommand {
 			}
 
 			// Update batch job
-			statements.updateBatchJobComplete.run(
-				Date.now(),
-				batchDuration,
-				succeeded,
-				failed,
-				cached,
-				null, // No file path for Discord uploads
-				resultZip.length,
-				null, // No download URL for Discord uploads
-				batchId
-			);
+			try {
+				statements.updateBatchJobComplete.run(
+					Date.now(),
+					batchDuration,
+					succeeded,
+					failed,
+					cached,
+					null, // No file path for Discord uploads
+					resultZip.length,
+					null, // No download URL for Discord uploads
+					batchId
+				);
+				logger.info(`[${batchId}] Updated batch job to completed: ${succeeded}/${totalCount} succeeded, ${cached} cached`);
+			} catch (dbErr: any) {
+				logger.error(`[${batchId}] Failed to update batch job:`, dbErr);
+			}
 
 			// Create Discord attachment
 			const zipAttachment = new AttachmentBuilder(resultZip, {

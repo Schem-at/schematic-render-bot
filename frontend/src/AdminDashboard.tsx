@@ -344,22 +344,50 @@ export function AdminDashboard() {
   const fetchBatchJobs = async () => {
     try {
       const response = await fetch('/api/admin/batch-jobs?limit=100');
-      if (!response.ok) throw new Error('Failed to fetch batch jobs');
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to fetch batch jobs:', response.status, errorText);
+        throw new Error(`Failed to fetch batch jobs: ${response.status}`);
+      }
       const data = await response.json();
+      console.log('Batch jobs data:', data);
       setBatchJobs(data.batches || []);
     } catch (err: any) {
       console.error('Error fetching batch jobs:', err);
+      setBatchJobs([]); // Set empty array on error
     }
   };
 
   const fetchBatchStats = async () => {
     try {
       const response = await fetch('/api/admin/batch-stats?days=30');
-      if (!response.ok) throw new Error('Failed to fetch batch stats');
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to fetch batch stats:', response.status, errorText);
+        throw new Error(`Failed to fetch batch stats: ${response.status}`);
+      }
       const data = await response.json();
+      console.log('Batch stats data:', data);
       setBatchStats(data);
     } catch (err: any) {
       console.error('Error fetching batch stats:', err);
+      // Set default stats on error
+      setBatchStats({
+        period: '30 days',
+        since: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+        stats: {
+          totalBatches: 0,
+          completedBatches: 0,
+          runningBatches: 0,
+          failedBatches: 0,
+          totalSchematicsProcessed: 0,
+          totalSucceeded: 0,
+          totalFailed: 0,
+          totalCached: 0,
+          avgDuration: 0,
+          avgSuccessRate: 0,
+        },
+      });
     }
   };
 
