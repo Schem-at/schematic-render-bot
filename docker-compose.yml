@@ -24,9 +24,10 @@ services:
       - UPLOAD_DIR=${UPLOAD_DIR:-./uploads}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
-      - ./uploads:/app/uploads
-      - ./logs:/app/logs
-      - ./data:/app/data
+      # Use Dokploy's files directory structure for persistent data
+      - ../files/uploads:/app/uploads
+      - ../files/logs:/app/logs
+      - ../files/data:/app/data
     healthcheck:
       test: ["CMD", "sh", "-c", "curl -f http://localhost:$${PORT:-3000}/health || exit 1"]
       interval: 30s
