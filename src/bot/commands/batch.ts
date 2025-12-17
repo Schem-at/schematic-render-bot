@@ -410,17 +410,17 @@ export default class Batch implements ICommand {
 
 			const resultZip = await createResultZip(successfulResults);
 			const zipFilename = `${attachment.name.replace('.zip', '')}_renders.zip`;
-			const downloadBatchId = randomUUID();
 
 			// Check if result is too large for Discord
 			if (resultZip.length > DISCORD_FILE_LIMIT) {
-				// Save to disk and provide download link
-				const zipPath = join(BATCH_STORAGE_DIR, `${downloadBatchId}.zip`);
+				// Save to disk using batch job ID (permanent reference)
+				const zipPath = join(BATCH_STORAGE_DIR, `${batchId}.zip`);
 
 				try {
 					await writeFile(zipPath, resultZip);
 
-					// Store metadata
+					// Also store in memory cache for 24h TTL (for backward compatibility)
+					const downloadBatchId = randomUUID();
 					batchFiles.set(downloadBatchId, {
 						path: zipPath,
 						createdAt: Date.now(),
@@ -430,7 +430,8 @@ export default class Batch implements ICommand {
 
 					// Get base URL from environment or construct it
 					const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'https://schemat.io';
-					const downloadUrl = `${baseUrl}/api/batch-download/${downloadBatchId}`;
+					// Use batch job ID for permanent access, downloadBatchId for 24h TTL
+					const downloadUrl = `${baseUrl}/api/batch-download/${batchId}`;
 
 					// Update batch job
 					statements.updateBatchJobComplete.run(

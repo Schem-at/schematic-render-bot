@@ -7,7 +7,7 @@ import {
   RefreshCw, Trash2, Home, Activity, XCircle, Clock, Globe,
   TrendingUp, Image as ImageIcon, BarChart3, LineChart, PieChart, Database,
   FileText, Search, Zap, Server,
-  Layers, ChevronLeft, ChevronRight
+  Layers, ChevronLeft, ChevronRight, Package, Download, CheckCircle, XCircle as XCircleIcon
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart as RechartsPie, Pie, Cell,
@@ -156,6 +156,60 @@ interface InsightsData {
   }>;
 }
 
+interface BatchJob {
+  id: string;
+  userId: string;
+  totalSchematics: number;
+  succeeded: number;
+  failed: number;
+  cached: number;
+  status: 'running' | 'completed' | 'error';
+  startTime: number;
+  endTime?: number;
+  duration?: number;
+  resultFileSize?: number;
+  downloadUrl?: string;
+  errorMessage?: string;
+  createdAt: number;
+  options?: {
+    width: number;
+    height: number;
+    isometric: boolean;
+    background: string;
+    framing: string;
+  };
+}
+
+interface BatchItem {
+  id: string;
+  fileHash: string;
+  filename: string;
+  status: 'pending' | 'cached' | 'rendered' | 'failed';
+  renderId?: string;
+  cachedRenderId?: string;
+  startTime?: number;
+  endTime?: number;
+  duration?: number;
+  errorMessage?: string;
+}
+
+interface BatchStats {
+  period: string;
+  since: string;
+  stats: {
+    totalBatches: number;
+    completedBatches: number;
+    runningBatches: number;
+    failedBatches: number;
+    totalSchematicsProcessed: number;
+    totalSucceeded: number;
+    totalFailed: number;
+    totalCached: number;
+    avgDuration: number;
+    avgSuccessRate: number;
+  };
+}
+
 export function AdminDashboard() {
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
   const [activeRenders, setActiveRenders] = useState<RenderMetric[]>([]);
@@ -167,6 +221,10 @@ export function AdminDashboard() {
   const [schemasPage, setSchemasPage] = useState(0);
   const [schemasSearch, setSchemasSearch] = useState('');
   const [insights, setInsights] = useState<InsightsData | null>(null);
+  const [batchJobs, setBatchJobs] = useState<BatchJob[]>([]);
+  const [batchStats, setBatchStats] = useState<BatchStats | null>(null);
+  const [selectedBatch, setSelectedBatch] = useState<BatchJob | null>(null);
+  const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -283,6 +341,40 @@ export function AdminDashboard() {
     }
   };
 
+  const fetchBatchJobs = async () => {
+    try {
+      const response = await fetch('/api/admin/batch-jobs?limit=100');
+      if (!response.ok) throw new Error('Failed to fetch batch jobs');
+      const data = await response.json();
+      setBatchJobs(data.batches || []);
+    } catch (err: any) {
+      console.error('Error fetching batch jobs:', err);
+    }
+  };
+
+  const fetchBatchStats = async () => {
+    try {
+      const response = await fetch('/api/admin/batch-stats?days=30');
+      if (!response.ok) throw new Error('Failed to fetch batch stats');
+      const data = await response.json();
+      setBatchStats(data);
+    } catch (err: any) {
+      console.error('Error fetching batch stats:', err);
+    }
+  };
+
+  const fetchBatchDetails = async (batchId: string) => {
+    try {
+      const response = await fetch(`/api/admin/batch-jobs/${batchId}`);
+      if (!response.ok) throw new Error('Failed to fetch batch details');
+      const data = await response.json();
+      setSelectedBatch(data.batch);
+      setBatchItems(data.items || []);
+    } catch (err: any) {
+      console.error('Error fetching batch details:', err);
+    }
+  };
+
   const resetMetrics = async () => {
     if (!confirm('Are you sure you want to reset all metrics?')) return;
 
@@ -304,6 +396,8 @@ export function AdminDashboard() {
       fetchAnalytics(),
       fetchPuppeteerMetrics(),
       fetchInsights(),
+      fetchBatchJobs(),
+      fetchBatchStats(),
     ]);
     setLoading(false);
   };
@@ -511,9 +605,10 @@ export function AdminDashboard() {
 
         {metrics && (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="schemas">Schemas</TabsTrigger>
+              <TabsTrigger value="batches">Batches</TabsTrigger>
               <TabsTrigger value="analytics">Analytics</TabsTrigger>
               <TabsTrigger value="renders">Renders</TabsTrigger>
               <TabsTrigger value="system">System</TabsTrigger>
@@ -808,6 +903,274 @@ export function AdminDashboard() {
                   )}
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* Batches Tab */}
+            <TabsContent value="batches" className="space-y-6 mt-6">
+              {/* Batch Statistics */}
+              {batchStats && (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  <Card className="border-l-4 border-l-blue-500">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium">Total Batches</CardTitle>
+                      <Package className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{batchStats.stats.totalBatches}</div>
+                      <p className="text-xs text-muted-foreground">Last {batchStats.period}</p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-l-4 border-l-green-500">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium">Completed</CardTitle>
+                      <CheckCircle className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{batchStats.stats.completedBatches}</div>
+                      <p className="text-xs text-muted-foreground">
+                        {batchStats.stats.runningBatches} running, {batchStats.stats.failedBatches} failed
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-l-4 border-l-purple-500">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium">Schematics Processed</CardTitle>
+                      <Layers className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{batchStats.stats.totalSchematicsProcessed}</div>
+                      <p className="text-xs text-muted-foreground">
+                        {batchStats.stats.totalSucceeded} succeeded, {batchStats.stats.totalCached} cached
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-l-4 border-l-yellow-500">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+                      <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{batchStats.stats.avgSuccessRate.toFixed(1)}%</div>
+                      <p className="text-xs text-muted-foreground">
+                        Avg duration: {formatDuration(batchStats.stats.avgDuration)}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Batch Jobs List */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Package className="h-5 w-5" />
+                        Batch Jobs
+                      </CardTitle>
+                      <CardDescription>View and manage batch processing jobs</CardDescription>
+                    </div>
+                    <Button onClick={fetchBatchJobs} variant="outline" size="sm">
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {batchJobs.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>No batch jobs found</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {batchJobs.map((batch) => (
+                        <Card
+                          key={batch.id}
+                          className={`hover:shadow-lg transition-shadow cursor-pointer ${selectedBatch?.id === batch.id ? 'ring-2 ring-primary' : ''
+                            }`}
+                          onClick={() => fetchBatchDetails(batch.id)}
+                        >
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant={batch.status === 'completed' ? 'default' : batch.status === 'error' ? 'destructive' : 'secondary'}>
+                                    {batch.status}
+                                  </Badge>
+                                  <span className="text-sm font-mono text-muted-foreground">{batch.id.substring(0, 16)}...</span>
+                                </div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                  <div>
+                                    <span className="text-muted-foreground">Total:</span>
+                                    <span className="ml-2 font-medium">{batch.totalSchematics}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Succeeded:</span>
+                                    <span className="ml-2 font-medium text-green-600">{batch.succeeded}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Cached:</span>
+                                    <span className="ml-2 font-medium text-blue-600">{batch.cached}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Failed:</span>
+                                    <span className="ml-2 font-medium text-red-600">{batch.failed}</span>
+                                  </div>
+                                </div>
+                                {batch.duration && (
+                                  <div className="text-sm text-muted-foreground">
+                                    Duration: {formatDuration(batch.duration)} • Started: {new Date(batch.startTime).toLocaleString()}
+                                  </div>
+                                )}
+                                {batch.resultFileSize && (
+                                  <div className="text-sm text-muted-foreground">
+                                    Result: {formatBytes(batch.resultFileSize)}
+                                  </div>
+                                )}
+                              </div>
+                              {batch.downloadUrl && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.open(batch.downloadUrl, '_blank');
+                                  }}
+                                >
+                                  <Download className="h-4 w-4 mr-2" />
+                                  Download
+                                </Button>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Batch Details */}
+              {selectedBatch && (
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle>Batch Details</CardTitle>
+                        <CardDescription>Batch ID: {selectedBatch.id}</CardDescription>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => setSelectedBatch(null)}>
+                        Close
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* Batch Info */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <div className="text-sm text-muted-foreground">Status</div>
+                        <Badge variant={selectedBatch.status === 'completed' ? 'default' : selectedBatch.status === 'error' ? 'destructive' : 'secondary'}>
+                          {selectedBatch.status}
+                        </Badge>
+                      </div>
+                      <div>
+                        <div className="text-sm text-muted-foreground">Total Schematics</div>
+                        <div className="text-lg font-semibold">{selectedBatch.totalSchematics}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-muted-foreground">Success Rate</div>
+                        <div className="text-lg font-semibold">
+                          {selectedBatch.totalSchematics > 0
+                            ? Math.round((selectedBatch.succeeded / selectedBatch.totalSchematics) * 100)
+                            : 0}%
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-muted-foreground">Cache Hit Rate</div>
+                        <div className="text-lg font-semibold text-blue-600">
+                          {selectedBatch.succeeded > 0
+                            ? Math.round((selectedBatch.cached / selectedBatch.succeeded) * 100)
+                            : 0}%
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Render Options */}
+                    {selectedBatch.options && (
+                      <div className="border-t pt-4">
+                        <div className="text-sm font-medium mb-2">Render Options</div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">View:</span>
+                            <span className="ml-2">{selectedBatch.options.isometric ? 'Isometric' : 'Perspective'}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Background:</span>
+                            <span className="ml-2">{selectedBatch.options.background}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Framing:</span>
+                            <span className="ml-2 capitalize">{selectedBatch.options.framing}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Resolution:</span>
+                            <span className="ml-2">{selectedBatch.options.width}×{selectedBatch.options.height}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Batch Items */}
+                    {batchItems.length > 0 && (
+                      <div className="border-t pt-4">
+                        <div className="text-sm font-medium mb-2">Schematic Items ({batchItems.length})</div>
+                        <div className="max-h-96 overflow-y-auto space-y-2">
+                          {batchItems.map((item) => (
+                            <div
+                              key={item.id}
+                              className="flex items-center justify-between p-2 border rounded text-sm hover:bg-muted/50"
+                            >
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                {item.status === 'cached' && <Badge variant="outline" className="text-blue-600">Cached</Badge>}
+                                {item.status === 'rendered' && <Badge variant="outline" className="text-green-600">Rendered</Badge>}
+                                {item.status === 'failed' && <Badge variant="destructive">Failed</Badge>}
+                                {item.status === 'pending' && <Badge variant="secondary">Pending</Badge>}
+                                <span className="truncate font-mono text-xs">{item.filename}</span>
+                              </div>
+                              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                {item.duration !== undefined && item.duration > 0 && (
+                                  <span>{formatDuration(item.duration)}</span>
+                                )}
+                                {item.errorMessage && (
+                                  <span className="text-red-600 truncate max-w-xs" title={item.errorMessage}>
+                                    {item.errorMessage}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Download Button */}
+                    {selectedBatch.downloadUrl && (
+                      <div className="border-t pt-4">
+                        <Button
+                          onClick={() => window.open(selectedBatch.downloadUrl, '_blank')}
+                          className="w-full"
+                        >
+                          <Download className="h-4 w-4 mr-2" />
+                          Download Batch Result ({selectedBatch.resultFileSize ? formatBytes(selectedBatch.resultFileSize) : 'N/A'})
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
 
             {/* Analytics Tab */}
