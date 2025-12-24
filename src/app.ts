@@ -133,7 +133,7 @@ async function startServer() {
 				// In development, proxy non-API routes to Vite
 				if (IS_DEV && !url.pathname.startsWith("/api") && !url.pathname.startsWith("/ws") && url.pathname !== "/health") {
 					try {
-						const viteUrl = `http://localhost:${VITE_PORT}${url.pathname}${url.search}`;
+						const viteUrl = `http://127.0.0.1:${VITE_PORT}${url.pathname}${url.search}`;
 						const response = await fetch(viteUrl, {
 							method: req.method,
 							headers: req.headers,
@@ -224,10 +224,10 @@ async function startServer() {
 		});
 
 		logger.info(`🌐 Server running on port ${PORT}`);
-		logger.info(`📱 Frontend: http://localhost:${PORT}`);
-		logger.info(`🔧 API: http://localhost:${PORT}/api`);
-		logger.info(`❤️  Health: http://localhost:${PORT}/health`);
-		logger.info(`🔌 WebSocket: ws://localhost:${PORT}/ws/admin`);
+		logger.info(`📱 Frontend: http://127.0.0.1:${PORT}`);
+		logger.info(`🔧 API: http://127.0.0.1:${PORT}/api`);
+		logger.info(`❤️  Health: http://127.0.0.1:${PORT}/health`);
+		logger.info(`🔌 WebSocket: ws://127.0.0.1:${PORT}/ws/admin`);
 
 		// Wait a moment for server to be ready
 		await new Promise((resolve) => setTimeout(resolve, 1000));

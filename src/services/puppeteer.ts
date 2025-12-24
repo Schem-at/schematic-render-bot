@@ -9,11 +9,11 @@ const IS_DEV = process.env.NODE_ENV !== "production";
 
 // In development, we prefer hitting Vite directly. If FRONTEND_URL is set but looks like the backend port,
 // we override it in dev to hit the Vite port instead to avoid proxy overhead/instability.
-let detectedFrontendUrl = process.env.FRONTEND_URL || (IS_DEV ? `http://localhost:${VITE_PORT}` : `http://localhost:${PORT}`);
+let detectedFrontendUrl = process.env.FRONTEND_URL || (IS_DEV ? `http://127.0.0.1:${VITE_PORT}` : `http://127.0.0.1:${PORT}`);
 
-if (IS_DEV && (detectedFrontendUrl.includes(`:${PORT}`) || detectedFrontendUrl.endsWith('localhost:3000'))) {
-	logger.info(`🔍 Dev mode detected: Overriding FRONTEND_URL ${detectedFrontendUrl} to hit Vite directly at http://localhost:${VITE_PORT}`);
-	detectedFrontendUrl = `http://localhost:${VITE_PORT}`;
+if (IS_DEV && (detectedFrontendUrl.includes(`:${PORT}`) || detectedFrontendUrl.includes('localhost:3000') || detectedFrontendUrl.includes('127.0.0.1:3000'))) {
+	logger.info(`🔍 Dev mode detected: Overriding FRONTEND_URL ${detectedFrontendUrl} to hit Vite directly at http://127.0.0.1:${VITE_PORT}`);
+	detectedFrontendUrl = `http://127.0.0.1:${VITE_PORT}`;
 }
 
 const FRONTEND_URL = detectedFrontendUrl;
@@ -42,8 +42,10 @@ export async function initPuppeteerService(): Promise<void> {
 					"--no-sandbox",
 					"--disable-setuid-sandbox",
 					"--disable-dev-shm-usage",
-					"--disable-accelerated-2d-canvas",
 					"--no-first-run",
+					"--ignore-gpu-blocklist",
+					"--enable-gpu-rasterization",
+					"--enable-unsafe-swiftshader",
 				],
 			});
 
@@ -109,8 +111,14 @@ export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions
 			"--no-sandbox",
 			"--disable-setuid-sandbox",
 			"--disable-dev-shm-usage",
-			"--disable-accelerated-2d-canvas",
 			"--no-first-run",
+			// GPU/Hardware acceleration optimization
+			"--ignore-gpu-blocklist",
+			"--enable-gpu-rasterization",
+			"--enable-zero-copy",
+			"--enable-native-gpu-memory-buffers",
+			// Allow software WebGL fallback if hardware fails
+			"--enable-unsafe-swiftshader",
 			// Memory limits to prevent crashes
 			"--js-flags=--max-old-space-size=512",
 		],
@@ -155,7 +163,7 @@ export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions
 		logger.info(`[${browserId}] Loading React app from detected URL: ${finalUrl} (Source: ${IS_DEV ? 'Vite Direct' : 'Production/Proxy'})`);
 
 		await page.goto(finalUrl, {
-			waitUntil: "networkidle0",
+			waitUntil: "domcontentloaded",
 			timeout: 60000,
 		});
 
