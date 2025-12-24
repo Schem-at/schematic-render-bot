@@ -134,11 +134,17 @@ async function startServer() {
 				if (IS_DEV && !url.pathname.startsWith("/api") && !url.pathname.startsWith("/ws") && url.pathname !== "/health") {
 					try {
 						const viteUrl = `http://localhost:${VITE_PORT}${url.pathname}${url.search}`;
-						return await fetch(viteUrl, {
+						const response = await fetch(viteUrl, {
 							method: req.method,
 							headers: req.headers,
 							body: req.body,
 						});
+
+						if (response.status === 404 && url.pathname === "/") {
+							logger.warn(`⚠️ Vite returned 404 for root. Is it still starting up?`);
+						}
+
+						return response;
 					} catch (error: any) {
 						logger.warn(`⚠️  Vite proxy error: ${error.message}`);
 						return new Response(

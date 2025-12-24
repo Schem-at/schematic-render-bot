@@ -7,7 +7,10 @@ import {
 	MessageFlags,
 	UserContextMenuCommandInteraction,
 	MessageContextMenuCommandInteraction,
-	ButtonInteraction
+	ButtonInteraction,
+	MessageReaction,
+	User as DiscordUser,
+	Partials
 } from "discord.js";
 import { logger } from "../shared/logger.js";
 import { commands, menus, registerCommands, syncCommands } from "./command.js";
@@ -16,7 +19,8 @@ import {
 	getAttachmentFromCache,
 	createRenderActionButtons,
 	storeAttachmentUrl,
-	RenderCustomOptions
+	RenderCustomOptions,
+	addRotationReactions
 } from "./utils/render.js";
 import { TimeoutError } from "puppeteer";
 
@@ -41,7 +45,9 @@ export async function initDiscordBot(): Promise<void> {
 				GatewayIntentBits.Guilds,
 				GatewayIntentBits.GuildMessages,
 				GatewayIntentBits.MessageContent,
+				GatewayIntentBits.GuildMessageReactions,
 			],
+			partials: [Partials.Message, Partials.Reaction, Partials.User],
 		});
 
 		client.once("clientReady", async () => {
@@ -84,6 +90,30 @@ export async function initDiscordBot(): Promise<void> {
 							flags: MessageFlags.Ephemeral
 						});
 					}
+				}
+			}
+		});
+
+		client.on(Events.MessageReactionAdd, async (reaction, user) => {
+			if (user.bot) return;
+
+			// Handle partials
+			if (reaction.partial) {
+				try {
+					await reaction.fetch();
+				} catch (error) {
+					logger.error("Failed to fetch partial reaction:", error);
+					return;
+				}
+			}
+
+			// Handle rotation reactions
+			const emoji = reaction.emoji.name;
+			if (emoji === '↪️' || emoji === '↩️' || emoji === '🔄') {
+				try {
+					await handleRotationReaction(reaction as MessageReaction, user as DiscordUser);
+				} catch (error) {
+					logger.error("Error handling rotation reaction:", error);
 				}
 			}
 		});
@@ -251,11 +281,15 @@ async function handleButtonInteraction(interaction: ButtonInteraction) {
 		// Update buttons to reflect current state
 		const buttons = createRenderActionButtons(cached.url, options);
 
-		await interaction.editReply({
+		const response = await interaction.editReply({
 			content: `✅ Re-rendered **${cached.name}** with ${description}`,
 			files: [result],
 			components: buttons
 		});
+
+		if (!isVideo) {
+			await addRotationReactions(response);
+		}
 
 		logger.info(`Button render completed: ${description} for ${cached.name}`);
 
@@ -276,4 +310,78 @@ async function handleButtonInteraction(interaction: ButtonInteraction) {
 
 export function getDiscordClient(): Client | null {
 	return client;
+}
+
+async function handleRotationReaction(reaction: MessageReaction, user: DiscordUser) {
+	const message = reaction.message;
+	if (message.author?.id !== client?.user?.id) return;
+
+	// Find the attachment URL hash from buttons
+	const row = message.components[0] as any;
+	const buttons = row?.components;
+	if (!buttons || buttons.length === 0) return;
+
+	const firstButton = buttons[0] as any;
+	const customId = firstButton.customId;
+	if (!customId || !customId.startsWith('render_')) return;
+
+	const parts = customId.split('_');
+	const urlHash = parts.slice(2).join('_');
+
+	const cached = getAttachmentFromCache(urlHash);
+	if (!cached) return;
+
+	// Determine rotation change
+	let rotationChange = 0;
+	if (reaction.emoji.name === '↪️') rotationChange = 90;
+	else if (reaction.emoji.name === '↩️') rotationChange = -90;
+	else if (reaction.emoji.name === '🔄') rotationChange = 180;
+
+	if (rotationChange === 0) return;
+
+	// Calculate new rotation
+	const currentRotation = cached.rotation || 0;
+	const newRotation = (currentRotation + rotationChange) % 360;
+
+	// Update cache
+	storeAttachmentUrl(urlHash, cached.url, cached.name, newRotation);
+
+	// Remove user's reaction
+	try {
+		await reaction.users.remove(user.id);
+	} catch (error) {
+		logger.warn("Could not remove user reaction:", error);
+	}
+
+	// Re-render
+	try {
+		// Mock attachment
+		const mockAttachment = {
+			url: cached.url,
+			name: cached.name,
+			size: 0,
+		} as any;
+
+		// Preserve other options if possible (e.g. isometric)
+		// We can try to infer isometric from button labels or customIds
+		const isIsometric = parts[1] === 'iso';
+
+		const options: RenderCustomOptions = {
+			rotation: newRotation,
+			isometric: isIsometric
+		};
+
+		const result = await render(mockAttachment, false, options);
+
+		const actionButtons = createRenderActionButtons(cached.url, options);
+
+		await message.edit({
+			content: `✅ Rotated **${cached.name}** to ${newRotation}°`,
+			files: [result],
+			components: actionButtons
+		});
+
+	} catch (error) {
+		logger.error("Failed to rotate schematic via reaction:", error);
+	}
 }

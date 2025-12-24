@@ -22,8 +22,23 @@ export function setupRoutes(app: Express): void {
 	});
 
 	// API routes
-	app.use("/api/admin", adminRouter);
-	app.use("/api/analytics", analyticsRouter);
+	const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CHANGE_ME_123";
+
+	const adminAuthMiddleware = (req: any, res: any, next: any) => {
+		// Allow thumbnails to be public as they are used in <img> tags
+		if (req.path.startsWith('/thumbnail/')) {
+			return next();
+		}
+		
+		const authHeader = req.headers.authorization;
+		if (!authHeader || authHeader !== `Bearer ${ADMIN_PASSWORD}`) {
+			return res.status(401).json({ error: "Unauthorized" });
+		}
+		next();
+	};
+
+	app.use("/api/admin", adminAuthMiddleware, adminRouter);
+	app.use("/api/analytics", adminAuthMiddleware, analyticsRouter);
 	app.use("/api/synthase", synthaseRouter);
 	app.use("/api/batch-download", batchDownloadRouter);
 	app.use("/api", renderRouter);

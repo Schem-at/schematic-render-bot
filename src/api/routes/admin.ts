@@ -7,6 +7,8 @@ import os from "os";
 
 const router = Router();
 
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CHANGE_ME_123";
+
 /**
  * Get system metrics and statistics
  */
@@ -112,17 +114,6 @@ router.get("/puppeteer-metrics", async (req, res) => {
         logger.error("Error fetching Puppeteer metrics:", error);
         res.status(500).json({ error: error.message || "Failed to fetch Puppeteer metrics" });
     }
-});
-
-/**
- * Health check endpoint
- */
-router.get("/health", (req, res) => {
-    res.json({
-        status: "healthy",
-        timestamp: Date.now(),
-        uptime: Math.round(process.uptime()),
-    });
 });
 
 /**
@@ -391,4 +382,3 @@ router.get("/batch-jobs/:id", (req, res) => {
 });
 
 export { router as adminRouter };
-

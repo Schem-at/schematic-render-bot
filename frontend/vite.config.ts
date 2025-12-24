@@ -9,7 +9,7 @@ export default defineConfig({
 	},
 	server: {
 		port: 5173,
-		strictPort: false, // Allow fallback to another port if 5173 is taken
+		strictPort: true, // Force 5173 so backend proxy always works
 		host: true, // Listen on all addresses
 		cors: true, // Enable CORS for backend proxy
 	},

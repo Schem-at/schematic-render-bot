@@ -2,7 +2,7 @@ import { ChatInputCommandInteraction, MessageFlags, SlashCommandBuilder } from "
 import { ICommand } from "../command";
 import { logger } from "../../shared/logger";
 import { TimeoutError } from "puppeteer";
-import { checkError, render, createRenderActionButtons, storeAttachmentUrl } from "../utils/render";
+import { checkError, render, createRenderActionButtons, storeAttachmentUrl, addRotationReactions } from "../utils/render";
 
 export default class Render implements ICommand {
 	info = new SlashCommandBuilder()
@@ -52,11 +52,15 @@ export default class Render implements ICommand {
 			// Create action buttons
 			const buttons = createRenderActionButtons(attachment!.url);
 
-			await interaction.editReply({
+			const response = await interaction.editReply({
 				content: `✅ Rendered **${attachment!.name}** • Try different views below:`,
 				files: [file],
 				components: buttons
 			});
+
+			if (!videoMode) {
+				await addRotationReactions(response);
+			}
 
 		} catch (error) {
 			if (error instanceof TimeoutError) {

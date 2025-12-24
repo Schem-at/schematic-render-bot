@@ -8,6 +8,7 @@ export interface RenderOptions {
   background?: string;  // hex color or 'transparent'
   framing?: 'tight' | 'medium' | 'wide';
   cameraPath?: 'circular' | 'orbit' | 'static' | 'cinematic';
+  rotation?: number; // degrees
 }
 
 
@@ -20,6 +21,7 @@ export interface VideoRenderOptions {
   background?: string;  // hex color or 'transparent'
   framing?: 'tight' | 'medium' | 'wide';
   cameraPath?: 'circular' | 'orbit' | 'static' | 'cinematic';
+  rotation?: number; // degrees
 }
 
 export interface SchematicMetadata {

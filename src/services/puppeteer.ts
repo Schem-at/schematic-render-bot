@@ -4,8 +4,19 @@ import { logger } from "../shared/logger.js";
 let isInitialized = false;
 let initializationPromise: Promise<void> | null = null;
 const PORT = parseInt(process.env.PORT || "3000");
-// Use FRONTEND_URL env var if set, otherwise use backend port (which proxies to frontend in dev)
-const FRONTEND_URL = process.env.FRONTEND_URL || `http://localhost:${PORT}`;
+const VITE_PORT = parseInt(process.env.VITE_PORT || "5173");
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+// In development, we prefer hitting Vite directly. If FRONTEND_URL is set but looks like the backend port,
+// we override it in dev to hit the Vite port instead to avoid proxy overhead/instability.
+let detectedFrontendUrl = process.env.FRONTEND_URL || (IS_DEV ? `http://localhost:${VITE_PORT}` : `http://localhost:${PORT}`);
+
+if (IS_DEV && (detectedFrontendUrl.includes(`:${PORT}`) || detectedFrontendUrl.endsWith('localhost:3000'))) {
+	logger.info(`🔍 Dev mode detected: Overriding FRONTEND_URL ${detectedFrontendUrl} to hit Vite directly at http://localhost:${VITE_PORT}`);
+	detectedFrontendUrl = `http://localhost:${VITE_PORT}`;
+}
+
+const FRONTEND_URL = detectedFrontendUrl;
 
 // Track active browser instances for monitoring
 const activeBrowsers = new Map<string, { browser: Browser; page: Page; startTime: number }>();
@@ -33,17 +44,13 @@ export async function initPuppeteerService(): Promise<void> {
 					"--disable-dev-shm-usage",
 					"--disable-accelerated-2d-canvas",
 					"--no-first-run",
-					"--disable-audio-output",
-					"--disable-background-timer-throttling",
-					"--disable-backgrounding-occluded-windows",
-					"--disable-renderer-backgrounding",
 				],
 			});
 
 			const testPage = await testBrowser.newPage();
 			await testPage.goto(FRONTEND_URL, {
 				waitUntil: "domcontentloaded",
-				timeout: 30000,
+				timeout: 60000,
 			});
 
 			const title = await testPage.title();
@@ -104,14 +111,8 @@ export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions
 			"--disable-dev-shm-usage",
 			"--disable-accelerated-2d-canvas",
 			"--no-first-run",
-			"--disable-audio-output",
-			"--disable-background-timer-throttling",
-			"--disable-backgrounding-occluded-windows",
-			"--disable-renderer-backgrounding",
 			// Memory limits to prevent crashes
 			"--js-flags=--max-old-space-size=512",
-			"--disable-gpu",
-			"--single-process",
 		],
 	});
 
@@ -122,6 +123,16 @@ export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions
 		const type = msg.type();
 		const text = msg.text();
 		logger.info(`[${browserId}] BROWSER [${type.toUpperCase()}]: ${text}`);
+	});
+
+	page.on("requestfailed", (request) => {
+		logger.warn(`[${browserId}] BROWSER REQUEST FAILED: ${request.url()} - ${request.failure()?.errorText}`);
+	});
+
+	page.on("response", (response) => {
+		if (response.status() >= 400) {
+			logger.warn(`[${browserId}] BROWSER ERROR RESPONSE: ${response.url()} - ${response.status()}`);
+		}
 	});
 
 	page.on("error", (err) => logger.error(`[${browserId}] PAGE ERROR:`, err));
@@ -141,11 +152,11 @@ export async function createIsolatedBrowser(renderOptions?: BrowserRenderOptions
 		}
 
 		const finalUrl = url.toString();
-		logger.info(`[${browserId}] Loading React app: ${finalUrl}`);
+		logger.info(`[${browserId}] Loading React app from detected URL: ${finalUrl} (Source: ${IS_DEV ? 'Vite Direct' : 'Production/Proxy'})`);
 
 		await page.goto(finalUrl, {
-			waitUntil: "domcontentloaded",
-			timeout: 30000,
+			waitUntil: "networkidle0",
+			timeout: 60000,
 		});
 
 		logger.info(`[${browserId}] ✅ React app loaded successfully`);

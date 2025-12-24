@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './components/ui/card';
 import { Button } from './components/ui/button';
 import { Badge } from './components/ui/badge';
@@ -7,7 +7,7 @@ import {
   RefreshCw, Trash2, Home, Activity, XCircle, Clock, Globe,
   TrendingUp, Image as ImageIcon, BarChart3, LineChart, PieChart, Database,
   FileText, Search, Zap, Server,
-  Layers, ChevronLeft, ChevronRight, Package, Download, CheckCircle
+  Layers, ChevronLeft, ChevronRight, Package, Download, CheckCircle, Lock, LogOut
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart as RechartsPie, Pie, Cell,
@@ -234,6 +234,8 @@ function ThumbnailImage({ fileHash, filename }: { fileHash: string; filename: st
 }
 
 export function AdminDashboard() {
+  const [password, setPassword] = useState(localStorage.getItem('admin_password') || '');
+  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('admin_password'));
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
   const [activeRenders, setActiveRenders] = useState<RenderMetric[]>([]);
   const [renderHistory, setRenderHistory] = useState<RenderMetric[]>([]);
@@ -255,23 +257,37 @@ export function AdminDashboard() {
 
   const SCHEMAS_PER_PAGE = 24;
 
+  const authenticatedFetch = useCallback(async (url: string, options: RequestInit = {}) => {
+    const headers = {
+      ...options.headers,
+      'Authorization': `Bearer ${password}`,
+    };
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 401) {
+      setIsLoggedIn(false);
+      localStorage.removeItem('admin_password');
+      throw new Error('Unauthorized');
+    }
+    return response;
+  }, [password]);
+
   const fetchMetrics = async () => {
     try {
-      const response = await fetch('/api/admin/metrics');
-      if (!response.ok) throw new Error('Failed to fetch metrics');
+      const response = await authenticatedFetch('/api/admin/metrics');
       const data = await response.json();
       setMetrics(data);
       setError(null);
     } catch (err: any) {
-      setError(err.message);
-      console.error('Error fetching metrics:', err);
+      if (err.message !== 'Unauthorized') {
+        setError(err.message);
+        console.error('Error fetching metrics:', err);
+      }
     }
   };
 
   const fetchActiveRenders = async () => {
     try {
-      const response = await fetch('/api/admin/active-renders');
-      if (!response.ok) throw new Error('Failed to fetch active renders');
+      const response = await authenticatedFetch('/api/admin/active-renders');
       const data = await response.json();
       setActiveRenders(data.activeRenders);
     } catch (err: any) {
@@ -281,8 +297,7 @@ export function AdminDashboard() {
 
   const fetchRenderHistory = async () => {
     try {
-      const response = await fetch('/api/admin/render-history?limit=50');
-      if (!response.ok) throw new Error('Failed to fetch render history');
+      const response = await authenticatedFetch('/api/admin/render-history?limit=50');
       const data = await response.json();
       setRenderHistory(data.renders);
     } catch (err: any) {
@@ -293,11 +308,11 @@ export function AdminDashboard() {
   const fetchAnalytics = async () => {
     try {
       const [timeline, performance, distribution, outliers, topFiles] = await Promise.all([
-        fetch('/api/analytics/timeline?hours=24').then(r => r.json()).catch(() => ({ data: [] })),
-        fetch('/api/analytics/performance').then(r => r.json()).catch(() => ({ data: {} })),
-        fetch('/api/analytics/distribution').then(r => r.json()).catch(() => ({ byType: [], byStatus: [] })),
-        fetch('/api/analytics/outliers?limit=12').then(r => r.json()).catch(() => ({ renders: [] })),
-        fetch('/api/analytics/top-files?limit=10').then(r => r.json()).catch(() => ({ files: [] })),
+        authenticatedFetch('/api/analytics/timeline?hours=24').then(r => r.json()).catch(() => ({ data: [] })),
+        authenticatedFetch('/api/analytics/performance').then(r => r.json()).catch(() => ({ data: {} })),
+        authenticatedFetch('/api/analytics/distribution').then(r => r.json()).catch(() => ({ byType: [], byStatus: [] })),
+        authenticatedFetch('/api/analytics/outliers?limit=12').then(r => r.json()).catch(() => ({ renders: [] })),
+        authenticatedFetch('/api/analytics/top-files?limit=10').then(r => r.json()).catch(() => ({ files: [] })),
       ]);
 
       setAnalytics({
@@ -319,20 +334,12 @@ export function AdminDashboard() {
       });
     } catch (err: any) {
       console.error('Error fetching analytics:', err);
-      setAnalytics({
-        timeline: [],
-        performance: { avgDuration: 0, p50: 0, p95: 0, p99: 0, fastest: 0, slowest: 0 },
-        distribution: { byType: [], byStatus: [] },
-        outliers: [],
-        topFiles: [],
-      });
     }
   };
 
   const fetchInsights = async () => {
     try {
-      const response = await fetch('/api/analytics/insights?hours=24');
-      if (!response.ok) throw new Error('Failed to fetch insights');
+      const response = await authenticatedFetch('/api/analytics/insights?hours=24');
       const data = await response.json();
       setInsights(data);
     } catch (err: any) {
@@ -343,8 +350,7 @@ export function AdminDashboard() {
   const fetchSchemas = async () => {
     try {
       const offset = schemasPage * SCHEMAS_PER_PAGE;
-      const response = await fetch(`/api/admin/schemas?limit=${SCHEMAS_PER_PAGE}&offset=${offset}&sortBy=created_at&sortOrder=DESC`);
-      if (!response.ok) throw new Error('Failed to fetch schemas');
+      const response = await authenticatedFetch(`/api/admin/schemas?limit=${SCHEMAS_PER_PAGE}&offset=${offset}&sortBy=created_at&sortOrder=DESC`);
       const data = await response.json();
       setSchemas(data.schemas || []);
       setSchemasTotal(data.total || 0);
@@ -355,8 +361,7 @@ export function AdminDashboard() {
 
   const fetchPuppeteerMetrics = async () => {
     try {
-      const response = await fetch('/api/admin/puppeteer-metrics');
-      if (!response.ok) throw new Error('Failed to fetch Puppeteer metrics');
+      const response = await authenticatedFetch('/api/admin/puppeteer-metrics');
       const data = await response.json();
       setPuppeteerMetrics(data);
     } catch (err: any) {
@@ -366,58 +371,28 @@ export function AdminDashboard() {
 
   const fetchBatchJobs = async () => {
     try {
-      const response = await fetch('/api/admin/batch-jobs?limit=100');
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Failed to fetch batch jobs:', response.status, errorText);
-        throw new Error(`Failed to fetch batch jobs: ${response.status}`);
-      }
+      const response = await authenticatedFetch('/api/admin/batch-jobs?limit=100');
       const data = await response.json();
-      console.log('Batch jobs data:', data);
       setBatchJobs(data.batches || []);
     } catch (err: any) {
       console.error('Error fetching batch jobs:', err);
-      setBatchJobs([]); // Set empty array on error
+      setBatchJobs([]);
     }
   };
 
   const fetchBatchStats = async () => {
     try {
-      const response = await fetch('/api/admin/batch-stats?days=30');
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Failed to fetch batch stats:', response.status, errorText);
-        throw new Error(`Failed to fetch batch stats: ${response.status}`);
-      }
+      const response = await authenticatedFetch('/api/admin/batch-stats?days=30');
       const data = await response.json();
-      console.log('Batch stats data:', data);
       setBatchStats(data);
     } catch (err: any) {
       console.error('Error fetching batch stats:', err);
-      // Set default stats on error
-      setBatchStats({
-        period: '30 days',
-        since: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-        stats: {
-          totalBatches: 0,
-          completedBatches: 0,
-          runningBatches: 0,
-          failedBatches: 0,
-          totalSchematicsProcessed: 0,
-          totalSucceeded: 0,
-          totalFailed: 0,
-          totalCached: 0,
-          avgDuration: 0,
-          avgSuccessRate: 0,
-        },
-      });
     }
   };
 
   const fetchBatchDetails = async (batchId: string) => {
     try {
-      const response = await fetch(`/api/admin/batch-jobs/${batchId}`);
-      if (!response.ok) throw new Error('Failed to fetch batch details');
+      const response = await authenticatedFetch(`/api/admin/batch-jobs/${batchId}`);
       const data = await response.json();
       setSelectedBatch(data.batch);
       setBatchItems(data.items || []);
@@ -430,7 +405,7 @@ export function AdminDashboard() {
     if (!confirm('Are you sure you want to reset all metrics?')) return;
 
     try {
-      const response = await fetch('/api/admin/reset-metrics', { method: 'POST' });
+      const response = await authenticatedFetch('/api/admin/reset-metrics', { method: 'POST' });
       if (!response.ok) throw new Error('Failed to reset metrics');
       await fetchAllData();
     } catch (err: any) {
@@ -439,6 +414,7 @@ export function AdminDashboard() {
   };
 
   const fetchAllData = async () => {
+    if (!isLoggedIn) return;
     setLoading(true);
     await Promise.all([
       fetchMetrics(),
@@ -454,19 +430,23 @@ export function AdminDashboard() {
   };
 
   useEffect(() => {
-    fetchAllData();
+    if (isLoggedIn) {
+      fetchAllData();
+    }
     document.getElementById('root')!.classList.add('admin-dashboard');
     return () => {
       document.getElementById('root')!.classList.remove('admin-dashboard');
     };
-  }, []);
+  }, [isLoggedIn]);
 
   useEffect(() => {
-    fetchSchemas();
-  }, [schemasPage]);
+    if (isLoggedIn) {
+      fetchSchemas();
+    }
+  }, [schemasPage, isLoggedIn]);
 
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || !isLoggedIn) return;
 
     let ws: WebSocket | null = null;
     let pingInterval: ReturnType<typeof setInterval> | null = null;
@@ -491,6 +471,8 @@ export function AdminDashboard() {
           clearInterval(fallbackInterval);
           fallbackInterval = null;
         }
+        // Send auth message if needed, but current server doesn't seem to support WS auth yet.
+        // For simplicity, we'll keep WS as is or implement simple auth if server allows.
       };
 
       ws.onmessage = (event) => {
@@ -552,7 +534,19 @@ export function AdminDashboard() {
         }
       }
     };
-  }, [autoRefresh]);
+  }, [autoRefresh, isLoggedIn]);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    localStorage.setItem('admin_password', password);
+    setIsLoggedIn(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('admin_password');
+    setPassword('');
+    setIsLoggedIn(false);
+  };
 
   const formatDuration = (ms?: number) => {
     if (!ms) return 'N/A';
@@ -573,7 +567,6 @@ export function AdminDashboard() {
     return `${hours}h ${minutes}m ${secs}s`;
   };
 
-
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { variant: 'default' | 'secondary' | 'destructive'; label: string }> = {
       running: { variant: 'default', label: 'Running' },
@@ -592,6 +585,45 @@ export function AdminDashboard() {
       schema.file_hash.toLowerCase().includes(search)
     );
   });
+
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-muted/20 p-4">
+        <Card className="w-full max-w-md shadow-xl border-t-4 border-t-primary">
+          <CardHeader className="text-center">
+            <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-4">
+              <Lock className="h-8 w-8 text-primary" />
+            </div>
+            <CardTitle className="text-2xl font-bold">Admin Access</CardTitle>
+            <CardDescription>Enter your password to access the dashboard</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="space-y-2">
+                <input
+                  type="password"
+                  placeholder="Admin Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-2 border rounded-md bg-background focus:ring-2 focus:ring-primary focus:outline-none transition-all"
+                  autoFocus
+                />
+              </div>
+              <Button type="submit" className="w-full">
+                Unlock Dashboard
+              </Button>
+              <Button asChild variant="ghost" className="w-full">
+                <a href="/">
+                  <Home className="h-4 w-4 mr-2" />
+                  Back to Renderer
+                </a>
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (loading && !metrics) {
     return (
@@ -632,6 +664,10 @@ export function AdminDashboard() {
             <Button onClick={resetMetrics} variant="destructive" size="sm">
               <Trash2 className="h-4 w-4" />
               Reset
+            </Button>
+            <Button onClick={handleLogout} variant="ghost" size="sm">
+              <LogOut className="h-4 w-4" />
+              Logout
             </Button>
             <Button asChild variant="outline" size="sm">
               <a href="/">

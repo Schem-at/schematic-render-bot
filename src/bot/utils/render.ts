@@ -11,6 +11,7 @@ export interface RenderCustomOptions {
 	framing?: 'tight' | 'medium' | 'wide';
 	width?: number;
 	height?: number;
+	rotation?: number;
 }
 
 export function checkError(attachment: Attachment | null) {
@@ -54,6 +55,7 @@ export async function render(
 		isometric: customOptions.isometric,
 		background: customOptions.background,
 		framing: customOptions.framing,
+		rotation: customOptions.rotation,
 	} : {
 		// Image settings
 		width: customOptions.width || 1920,
@@ -63,6 +65,7 @@ export async function render(
 		isometric: customOptions.isometric,
 		background: customOptions.background,
 		framing: customOptions.framing,
+		rotation: customOptions.rotation,
 	};
 
 	// Render the schematic
@@ -121,11 +124,11 @@ export function createRenderActionButtons(attachmentUrl: string, currentOptions:
 }
 
 // Store attachment URLs temporarily (in-memory cache with TTL)
-const attachmentCache = new Map<string, { url: string, name: string, timestamp: number }>();
+const attachmentCache = new Map<string, { url: string, name: string, timestamp: number, rotation?: number }>();
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
-export function storeAttachmentUrl(urlHash: string, url: string, name: string) {
-	attachmentCache.set(urlHash, { url, name, timestamp: Date.now() });
+export function storeAttachmentUrl(urlHash: string, url: string, name: string, rotation?: number) {
+	attachmentCache.set(urlHash, { url, name, timestamp: Date.now(), rotation });
 
 	// Clean up old entries
 	for (const [key, value] of attachmentCache.entries()) {
@@ -135,7 +138,7 @@ export function storeAttachmentUrl(urlHash: string, url: string, name: string) {
 	}
 }
 
-export function getAttachmentFromCache(urlHash: string): { url: string, name: string } | null {
+export function getAttachmentFromCache(urlHash: string): { url: string, name: string, rotation?: number } | null {
 	const cached = attachmentCache.get(urlHash);
 	if (!cached) return null;
 
@@ -145,5 +148,15 @@ export function getAttachmentFromCache(urlHash: string): { url: string, name: st
 		return null;
 	}
 
-	return { url: cached.url, name: cached.name };
+	return { url: cached.url, name: cached.name, rotation: cached.rotation };
+}
+
+export async function addRotationReactions(message: any) {
+	try {
+		await message.react('↩️'); // -90
+		await message.react('↪️'); // +90
+		await message.react('🔄'); // 180
+	} catch (error) {
+		logger.error("Failed to add rotation reactions:", error);
+	}
 }

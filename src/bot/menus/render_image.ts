@@ -1,6 +1,6 @@
 import { ApplicationCommandType, ContextMenuCommandBuilder, MessageContextMenuCommandInteraction, MessageFlags } from "discord.js";
 import { IMenuCommand } from "../command";
-import { checkError, render, createRenderActionButtons, storeAttachmentUrl } from "../utils/render";
+import { checkError, render, createRenderActionButtons, storeAttachmentUrl, addRotationReactions } from "../utils/render";
 import { TimeoutError } from "puppeteer";
 import { logger } from "../../shared/logger";
 
@@ -32,11 +32,13 @@ export default class RenderImage implements IMenuCommand {
 			// Create action buttons
 			const buttons = createRenderActionButtons(attachment.url);
 
-			await interaction.editReply({
+			const response = await interaction.editReply({
 				content: `✅ Rendered **${attachment.name}** • Try different views below:`,
 				files: [image],
 				components: buttons
 			});
+
+			await addRotationReactions(response);
 
 		} catch (error) {
 			if (error instanceof TimeoutError) {

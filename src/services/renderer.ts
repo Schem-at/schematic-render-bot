@@ -144,9 +144,44 @@ export async function renderSchematic(
 			}
 
 			console.log(`✅ All render options applied`);
-
-
 		}, options);
+
+		// Apply rotation if specified
+		if (options.rotation !== undefined) {
+			logger.info(`[${browserId}] Applying rotation: ${options.rotation} degrees`);
+			await page.evaluate(async (rotationDeg, opts) => {
+				const renderer = (window as any).rendererRef?.current;
+				if (!renderer) return;
+
+				const schematicManager = renderer.schematicManager;
+				// Get all schematics and rotate them
+				for (const schematic of schematicManager.schematics.values()) {
+					if (schematic.group) {
+						schematic.group.rotation.y = (rotationDeg * Math.PI) / 180;
+					}
+				}
+
+				// Re-focus to account for new rotated bounds
+				const paddingMap: Record<string, number> = {
+					tight: 0.05,
+					medium: 0.15,
+					wide: 0.3
+				};
+				const padding = paddingMap[opts.framing || 'medium'] || 0.15;
+				
+				try {
+					await renderer.cameraManager?.focusOnSchematics({
+						animationDuration: 0,
+						padding
+					});
+				} catch (err) {
+					console.warn("Could not adjust framing after rotation:", err);
+				}
+
+				// Re-render to show changes
+				renderer.renderManager?.render();
+			}, options.rotation, options);
+		}
 
 		// Take screenshot with detailed logging
 		logger.info(`[${browserId}] Taking screenshot...`);
